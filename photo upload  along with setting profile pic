@@ -1,0 +1,84 @@
+class UploadPhotoView(generics.CreateAPIView):
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser] 
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            user_photo_data = UsersUtils.prepare_album_data(request=request)
+
+            if user_photo_data["has_error"]:
+                return Response(error_(message=user_photo_data["message"]),status=status.HTTP_200_OK)
+            
+            serializer = UserAlbumSerializer(data=user_photo_data["user_photo_data"],many=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            response_data = {}
+            return Response(
+                success_(response=response_data, message="Onboarding step set to 7"),
+                status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            # import traceback
+            # print(traceback.format_exc())
+            return Response(
+                error_(
+                    message=str(e),
+                ),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    # serilizer
+
+    class UserAlbumSerializer(serializers.ModelSerializer):   
+    class Meta:
+        model = UserAlbum
+        fields = ['image', 'primary', 'is_private','user']
+
+    def validate(self, data):
+        if not data.get('image'):
+            raise serializers.ValidationError({"image": "This field is required."})
+
+        return data
+
+  # utils.py 
+  @staticmethod
+    def prepare_album_data(request):
+        has_error = False
+        message = ""
+        user_photos_data = []
+        profile_image = request.FILES.get('profile_image')
+        user_photos = request.FILES.getlist('user_photos')
+        is_private = request.data.get("is_private")
+
+        if not profile_image or not isinstance(profile_image, InMemoryUploadedFile):
+            has_error = True
+            message = const.PRIMARY_PHOTO_REQUIRED
+        if len(user_photos) > const.PROFILE_PHOTO_UPLOAD_LIMIT:
+            has_error = True
+            message = const.MAX_PHOTO_LIMIT_EXCEEDED
+            
+        if not has_error:
+            user_photos_data.append({
+                'user': request.user.id,
+                'image': profile_image,
+                'primary': UserAlbum.PrimaryphotoChoices.YES,
+                'is_private': is_private
+            })
+
+            if user_photos:
+                for photo in user_photos:
+                    if isinstance(photo, InMemoryUploadedFile):
+                        user_photos_data.append({
+                            'user': request.user.id,
+                            'image': photo,
+                            'primary': UserAlbum.PrimaryphotoChoices.NO,
+                            'is_private': is_private
+                        })
+        response = {
+            "has_error" : has_error,
+            "message" : message,
+            "user_photo_data" : user_photos_data
+        }
+
+        return response
