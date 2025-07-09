@@ -1,0 +1,23 @@
+def prepare_album_data(user, profile_image, user_photos=None, is_private=False):
+    
+        if not profile_image or not isinstance(profile_image, InMemoryUploadedFile):
+            raise ValueError("Primary profile picture is required")
+
+        album_data = [{
+            'user': user,
+            'image': profile_image,
+            'primary': UserAlbum.PrimaryphotoChoices.YES,
+            'is_private': bool(is_private)
+        }]
+
+        if user_photos:
+            for photo in user_photos[:6]: 
+                if isinstance(photo, InMemoryUploadedFile):
+                    album_data.append({
+                        'user': user,
+                        'image': photo,
+                        'primary': UserAlbum.PrimaryphotoChoices.NO,
+                        'is_private': bool(is_private)
+                    })
+
+        return album_data
