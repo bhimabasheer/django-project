@@ -1,0 +1,100 @@
+@staticmethod
+    def save_user_personality(request):
+        try:
+            user = request.user
+
+            current_personalities = list(
+                UsersPersonality.objects.filter(
+                    user=user,
+                    is_deleted=False
+                ).values_list('personality_id', flat=True)
+            )
+
+            new_personalities = list(map(int, request.data.get('personalities', [])))
+
+            to_soft_delete = set(current_personalities) - set(new_personalities)
+
+            to_check_existing_personality = set(new_personalities) - set(current_personalities)
+
+            soft_deleted = UsersPersonality.objects.filter(
+                user=user,
+                personality_id__in=to_check_existing_personality, 
+                is_deleted=True
+            ).values_list('personality_id', flat=True)
+
+            soft_deleted = set(soft_deleted)
+            created_personality = list(to_check_existing_personality - soft_deleted)
+
+            if to_soft_delete:
+                UsersPersonality.objects.filter(
+                    user=user,
+                    personality_id__in=to_soft_delete
+                ).update(is_deleted=True)
+
+            if soft_deleted:
+                UsersPersonality.objects.filter(
+                    user=user,
+                    personality_id__in=soft_deleted
+                ).update(is_deleted=False)
+
+            created_personalities = []
+            for personality_id in created_personality: 
+                data={
+                    "personality" :personality_id ,
+                    "user" : request.user.id               
+                }
+            
+                created_personalities.append(data)  
+            
+            return {
+                "has_error": False,
+                "data": created_personalities  
+            }
+
+        except Exception as e:
+            return {
+                "has_error": True,
+                "error": str(e)
+            }
+
+class SaveUsersPersonalitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UsersPersonality
+        fields = ['personality','user']
+
+class CreatePersonalityView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            created_personalities = UsersUtils.save_user_personality(request)
+            
+            if created_personalities['has_error']:
+                return Response(
+                    error_(message=created_personalities['error']),
+                    status=status.HTTP_200_OK
+                )
+            
+            serializer = SaveUsersPersonalitySerializer(data=created_personalities["data"],many=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            
+            request.user.onboarding_steps = const.STEP_PERSONALITY
+            request.user.save(update_fields=['onboarding_steps'])
+            
+            return Response(
+                success_(
+                    message=const.PERSONALITY_SAVED,
+                    response={
+                        'onboarding_step': request.user.onboarding_steps
+                    }
+                ),
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                error_(message=str(e)),
+                status=status.HTTP_200_OK
+            ) 
