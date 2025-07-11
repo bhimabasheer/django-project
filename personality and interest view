@@ -1,0 +1,77 @@
+class CreateInterestsView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            response = UsersUtils.generate_user_interest_payload(request)
+            
+            if 'has_error' in response:
+                return Response(
+                    error_(message=response['message']),
+                    status=status.HTTP_200_OK
+                )
+            
+            interest_data = response["interest_data"]
+            if response["interest_data"]:
+                serializer = SaveUsersInterestsSerializer(data=interest_data,many=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+            
+            request.user.onboarding_steps = const.STEP_INTERESTS
+            request.user.save(update_fields=['onboarding_steps'])
+            
+            return Response(
+                success_(
+                    message=const.INTEREST_SAVED,
+                    response={
+                        'onboarding_step': request.user.onboarding_steps
+                    }
+                ),
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                error_(message=str(e)),
+                status=status.HTTP_200_OK
+            )
+
+class CreatePersonalityView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        try:
+            response = UsersUtils.generate_user_personality_payload(request)
+            
+            if 'has_error' in response:
+                return Response(
+                    error_(message=response['message']),
+                    status=status.HTTP_200_OK
+                )
+            
+            personality_data = response["personality_data"]
+            if response["personality_data"]:
+                serializer = SaveUsersPersonalitySerializer(data=personality_data,many=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+            
+            request.user.onboarding_steps = const.STEP_PERSONALITY
+            request.user.save(update_fields=['onboarding_steps'])
+            
+            return Response(
+                success_(
+                    message=const.PERSONALITY_SAVED,
+                    response={
+                        'onboarding_step': request.user.onboarding_steps
+                    }
+                ),
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                error_(message=str(e)),
+                status=status.HTTP_200_OK
+            )
