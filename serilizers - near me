@@ -1,0 +1,740 @@
+from rest_framework import serializers
+from drf_extra_fields.fields import Base64ImageField
+from .models import Users
+from blogs.models import SuccessStory
+from store.models import WeddingStore, WeddingBanner
+from users.utils import calculate_profile_completion
+from user_preference.models import UserPartnerPreference
+from datetime import date
+
+
+
+#Add new imports for onboarding serializers
+
+from .models import UsersInterests, UsersPersonality, UserAlbum
+from common.models import Religion, Country, City, Place, Interest, Personality, Qualification, Occupation, Course, ListValue,Caste,District,Location
+
+
+
+class UserBasicSerializer(serializers.ModelSerializer):
+    profile_image = serializers.ImageField(use_url=True, allow_null=True)
+
+    class Meta:
+        model = Users
+        fields = ['id', 'first_name', 'last_name', 'profile_image','onboarding_steps']
+
+class SuccessStorySerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(use_url=True, allow_null=True)
+
+    class Meta:
+        model = SuccessStory
+        fields = ['id', 'title', 'image']
+
+class WeddingStoreSerializer(serializers.ModelSerializer):
+    location = serializers.CharField(source='location.location', read_only=True)
+
+    class Meta:
+        model = WeddingStore
+        fields = ['id', 'store_name', 'image', 'location', 'heading', 'description', 'geo_url', 'website', 'phone', 'whatsapp', 'from_date', 'to_date', 'status']
+        extra_kwargs = {
+            'image': {'write_only': False, 'read_only': True},
+            'store_name': {'read_only': True},
+            'status': {'read_only': True}
+        }
+
+class WeddingBannerSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(use_url=True, allow_null=True)
+    link = serializers.URLField(allow_null=True)
+
+    class Meta:
+        model = WeddingBanner
+        fields = ['id', 'image', 'link']
+
+class HomePageSerializer(serializers.Serializer):
+    greeting = serializers.SerializerMethodField()
+    recently_joined = UserBasicSerializer(many=True)
+    match_suggestions = UserBasicSerializer(many=True)
+    who_viewed_you = UserBasicSerializer(many=True)
+    success_stories = SuccessStorySerializer(many=True)
+    wedding_services = WeddingStoreSerializer(many=True)
+    banners = WeddingBannerSerializer(many=True)
+    profile_completion = serializers.IntegerField()  # Expects integer from calculate_profile_completion
+
+    def get_greeting(self, obj):
+        user = self.context['request'].user
+        return f"Hi, {user.first_name or 'User'} 👋"
+    
+    def to_representation(self, instance):
+        ret = {'greeting': self.get_greeting(instance)}
+
+        # Handle recently_joined
+        recently_joined = instance.get('recently_joined', [])
+        if isinstance(recently_joined, (list, tuple)):
+            ret['recently_joined'] = recently_joined
+        else:
+            ret['recently_joined'] = UserBasicSerializer(recently_joined, many=True).data
+
+        # Handle match_suggestions
+        match_suggestions = instance.get('match_suggestions', [])
+        if isinstance(match_suggestions, (list, tuple)):
+            ret['match_suggestions'] = match_suggestions
+        else:
+            ret['match_suggestions'] = UserBasicSerializer(match_suggestions, many=True).data
+
+        # Handle who_viewed_you
+        who_viewed_you = instance.get('who_viewed_you', [])
+        if isinstance(who_viewed_you, (list, tuple)):
+            ret['who_viewed_you'] = who_viewed_you
+        else:
+            ret['who_viewed_you'] = UserBasicSerializer(who_viewed_you, many=True).data
+
+        # Handle success_stories
+        success_stories = instance.get('success_stories', [])
+        if isinstance(success_stories, (list, tuple)):
+            ret['success_stories'] = success_stories
+        else:
+            ret['success_stories'] = SuccessStorySerializer(success_stories, many=True).data
+
+        # Handle wedding_services
+        wedding_services = instance.get('wedding_services', [])
+        if isinstance(wedding_services, (list, tuple)):
+            ret['wedding_services'] = wedding_services
+        else:
+            ret['wedding_services'] = WeddingStoreSerializer(wedding_services, many=True).data
+
+        # Handle banners
+        banners = instance.get('banners', [])
+        if isinstance(banners, (list, tuple)):
+            ret['banners'] = banners
+        else:
+            ret['banners'] = WeddingBannerSerializer(banners, many=True).data
+
+        ret['profile_completion'] = instance.get('profile_completion', 0)
+        ret['user_id'] = instance.get('user_id', 0)
+
+        return ret
+
+
+# Onboarding Serializers
+class CustomPrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
+    def to_internal_value(self, data):
+        if isinstance(data, list):
+            if len(data) == 0:
+                return None
+            data = data[0]  # Take first element of the array
+        return super().to_internal_value(data)
+'''
+class UsersSerializer(serializers.ModelSerializer):
+    religion = serializers.PrimaryKeyRelatedField(queryset=Religion.objects.all(), allow_null=True)
+    country = serializers.PrimaryKeyRelatedField(queryset=Country.objects.all(), allow_null=True)
+    city = serializers.PrimaryKeyRelatedField(queryset=City.objects.all(), allow_null=True)
+    place = serializers.PrimaryKeyRelatedField(queryset=Place.objects.all(), allow_null=True)
+    body_type = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='body_type'), allow_null=True)
+    complexion = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='complexion'), allow_null=True)
+    physical_status = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='physical_status'), allow_null=True)
+    qualification = serializers.PrimaryKeyRelatedField(queryset=Qualification.objects.all(), allow_null=True)
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), allow_null=True)
+    occupation = serializers.PrimaryKeyRelatedField(queryset=Occupation.objects.all(), allow_null=True)
+    sector = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='sector'), allow_null=True)
+    family_status = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='family_status'), allow_null=True)
+    marital_status = CustomPrimaryKeyRelatedField(
+        queryset=ListValue.objects.filter(type='marital_status'), 
+        allow_null=True
+    )
+    diet = CustomPrimaryKeyRelatedField(
+        queryset=ListValue.objects.filter(type='diet'), 
+        allow_null=True
+    )
+    
+    class Meta:
+        model = Users
+        fields = [
+            'dob', 'religion', 'country', 'city', 'place', 'pin',
+            'marital_status', 'is_orphan', 'height', 'weight', 'body_type',
+            'complexion', 'physical_status', 'physical_challenge', 'diet', 'drink', 'smoke',
+            'qualification', 'course', 'occupation', 'sector', 'annual_income',
+            'family_status'
+        ]
+
+class UsersInterestsSerializer(serializers.ModelSerializer):
+    interest = serializers.PrimaryKeyRelatedField(queryset=Interest.objects.all())
+
+    class Meta:
+        model = UsersInterests
+        fields = ['interest']
+
+class UsersPersonalitySerializer(serializers.ModelSerializer):
+    personality = serializers.PrimaryKeyRelatedField(queryset=Personality.objects.all())
+
+    class Meta:
+        model = UsersPersonality
+        fields = ['personality']
+
+class UserAlbumSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField()
+
+    class Meta:
+        model = UserAlbum
+        fields = ['image', 'primary']
+'''
+#onboarding split up
+
+class BasicInfoSerializer(serializers.ModelSerializer):
+    religion = serializers.PrimaryKeyRelatedField(
+        queryset=Religion.objects.all(),
+        allow_null=True,
+        required=False
+    )
+    community = serializers.PrimaryKeyRelatedField(
+        queryset=Caste.objects.all(),
+        allow_null=True,
+        required=False,
+        source='caste'
+    )
+    nationality = serializers.PrimaryKeyRelatedField(
+        queryset=Country.objects.all(),
+        allow_null=True,
+        required=False,
+        source='country'
+    )
+    state = serializers.CharField(
+        allow_null=True,
+        required=False,
+        max_length=100
+    )
+    district = serializers.PrimaryKeyRelatedField(
+        queryset=District.objects.all(),
+        allow_null=True,
+        required=False
+    )
+    city = serializers.PrimaryKeyRelatedField(
+        queryset=City.objects.all(),
+        allow_null=True,
+        required=False
+    )
+    town = serializers.PrimaryKeyRelatedField(
+        queryset=Place.objects.all(),
+        allow_null=True,
+        required=False,
+        source='place'
+    )
+    pincode = serializers.CharField(
+        source='pin',
+        allow_null=True,
+        required=False,
+        max_length=10
+    )
+
+    class Meta:
+        model = Users
+        fields = [
+            'dob', 'religion', 'community', 'nationality',
+            'state', 'district', 'city', 'town', 'pincode'
+        ]
+        extra_kwargs = {
+            'dob': {
+                'input_formats': ['%d/%m/%Y'],
+                'required': True
+            }
+        }
+
+    def validate_dob(self, value):
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value, '%d/%m/%Y').date()
+            except ValueError:
+                raise serializers.ValidationError("Date has wrong format. Use one of these formats instead: DD/MM/YYYY")
+        return value
+
+    def validate(self, data):
+        state = data.get('state')
+        pincode = data.get('pin')
+        if state == 'California' and pincode and not pincode.startswith('9'):
+            raise serializers.ValidationError("Pincode does not match California")
+        return data
+
+    def create(self, validated_data):
+        validated_data['onboarding_steps'] = 1
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        validated_data['onboarding_steps'] = 1
+        return super().update(instance, validated_data)
+
+class UsersInterestsSerializer(serializers.ModelSerializer):
+    interest = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(
+            queryset=Interest.objects.all()
+        )
+    )
+    class Meta:
+        model = UsersInterests
+        fields = ['interest']
+
+class UsersPersonalitySerializer(serializers.ModelSerializer):
+    personality = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(queryset=Personality.objects.all())
+    )
+    class Meta:
+        model = UsersPersonality
+        fields = ['personality']
+
+class PhysicalMaritalSerializer(serializers.ModelSerializer):
+    marital_status = CustomPrimaryKeyRelatedField(
+        queryset=ListValue.objects.filter(type='marital_status'), 
+        allow_null=True
+    )
+    body_type = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='body_type'), allow_null=True)
+    complexion = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='complexion'), allow_null=True)
+    physical_status = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='physical_status'), allow_null=True)
+    diet = CustomPrimaryKeyRelatedField(
+        queryset=ListValue.objects.filter(type='diet'), 
+        allow_null=True
+    )
+
+    class Meta:
+        model = Users
+        fields = [
+            'marital_status', 'is_orphan', 'height', 'weight', 'body_type',
+            'complexion', 'physical_status', 'physical_challenge', 'diet', 'drink', 'smoke'
+        ]
+        
+class CareerDetailsSerializer(serializers.ModelSerializer):
+    qualification = serializers.PrimaryKeyRelatedField(queryset=Qualification.objects.all(), allow_null=True)
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), allow_null=True)
+    occupation = serializers.PrimaryKeyRelatedField(queryset=Occupation.objects.all(), allow_null=True)
+    sector = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='sector'), allow_null=True)
+    family_status = serializers.PrimaryKeyRelatedField(queryset=ListValue.objects.filter(type='family_status'), allow_null=True)
+
+    class Meta:
+        model = Users
+        fields = ['qualification', 'course', 'occupation', 'sector', 'annual_income', 'family_status']
+
+
+class UserAlbumSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField()
+    primary = serializers.BooleanField(required=False, default=False)
+    is_private = serializers.BooleanField(required=False, default=False)
+   
+
+    class Meta:
+        model = UserAlbum
+        fields = ['image', 'primary', 'is_private', 'created_at']
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        validated_data.pop('user', None)  
+        is_primary = validated_data.pop('primary', False)
+        validated_data['primary'] = 1 if is_primary else 2
+
+        return UserAlbum.objects.create(user=user, **validated_data)
+
+
+class PhotoPrivacySerializer(serializers.Serializer):
+    is_private = serializers.BooleanField()
+
+#For You Serializers
+#1)my matches
+class MatchedUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['id', 'first_name', 'last_name', 'profile_image', 'age', 'gender','height', 'religion', 'country', 'qualification', 'occupation','drink','smoke']
+
+    
+#2)professional matches
+class ProfessionalUserSerializer(serializers.ModelSerializer):
+    occupation = serializers.StringRelatedField
+    qualification = serializers.StringRelatedField
+    course = serializers.StringRelatedField()
+    sector = serializers.StringRelatedField()
+    profile_image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Users
+        fields = [
+            'id', 'first_name', 'last_name', 'age', 'gender', 'marital_status',
+            'qualification', 'occupation', 'course', 'employment', 'annual_income',
+            'profile_image_url', 'sector'
+        ]
+
+    def get_profile_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.profile_image:
+            return request.build_absolute_uri(obj.profile_image.url)
+        return None
+
+#3)Success story done in blogs app
+#4)Wedding store in store app
+#5)Educationl matches
+class UserEducationalMatchSerializer(serializers.ModelSerializer):
+    qualification_name = serializers.CharField(source='qualification.name', read_only=True)
+    course_name = serializers.CharField(source='course.name', read_only=True)
+
+    class Meta:
+        model = Users
+        fields = ['id', 'username', 'qualification', 'qualification_name', 'course', 'course_name']
+
+#prifile page
+
+class UserContactSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['phone', 'email', 'email_verified', 
+                 'whatsapp_countrycode', 'whatsapp_number', 'countrycode']
+
+class UpdateContactSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, max_length=15)
+    countrycode = serializers.CharField(required=False, max_length=5)
+    whatsapp_number = serializers.CharField(required=False, max_length=15)
+    whatsapp_countrycode = serializers.CharField(required=False, max_length=5)
+
+    def validate_email(self, value):
+        user = self.context['user']
+        if not value:
+            return None
+            
+        try:
+            validate_email(value)
+        except ValidationError:
+            raise serializers.ValidationError("Enter a valid email address")
+            
+        if Users.objects.filter(email=value).exclude(id=user.id).exists():
+            raise serializers.ValidationError("Email already registered")
+        return value
+
+    def validate_phone_number(self, value):
+        if value and not value.isdigit():
+            raise serializers.ValidationError("Phone number must contain only digits")
+        return value
+
+    def validate(self, data):
+        field_groups = [
+            ('phone_number', 'countrycode'),
+            ('whatsapp_number', 'whatsapp_countrycode')
+        ]
+        
+        for num_field, code_field in field_groups:
+            if data.get(num_field) and not data.get(code_field):
+                raise serializers.ValidationError(
+                    {code_field: "Country code is required"}
+                )
+        return data
+
+class VerifyEmailOTPSerializer(serializers.Serializer):
+    otp = serializers.CharField(min_length=6, max_length=6)
+
+
+# Basic Info Serializer (Personal Details)
+class BasicInfoUpdateSerializer(serializers.ModelSerializer):
+    age = serializers.SerializerMethodField()
+    lives_in = serializers.PrimaryKeyRelatedField(
+        queryset=City.objects.all(),
+        source='city',
+        required=False,
+        allow_null=True
+    )
+    drinking_habits = serializers.BooleanField(source='drink', required=False)
+    smoking_habits = serializers.BooleanField(source='smoke', required=False)
+    nationality = serializers.PrimaryKeyRelatedField(
+        source='country',
+        queryset=Country.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    community = serializers.PrimaryKeyRelatedField(
+        queryset=Caste.objects.all(),
+        source='caste',
+        required=False,
+        allow_null=True
+    )
+
+    profession = serializers.PrimaryKeyRelatedField(
+        queryset=Occupation.objects.all(),
+        source='Occupation',
+        required=False,
+        allow_null=True
+    )
+    
+    date_of_birth = serializers.DateField(source='dob', required=False)
+    
+    height = serializers.IntegerField(
+    default=0,
+    allow_null=True,  
+    required=False,   
+    help_text="User height in cm"
+    )
+    interested_in_moving_abroad = serializers.ChoiceField(
+        choices=[('1', 'Yes'), ('2', 'No')],
+        required=False, 
+        allow_null=True,  
+        allow_blank=True,
+        default='2'
+    )
+    def get_age(self, obj):
+        if obj.dob:  # Make sure this matches your date of birth field name
+            today = date.today()
+            dob = obj.dob
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            return age
+        return None
+
+    class Meta:
+        model = Users
+        fields = [
+            'age', 'date_of_birth', 'gender', 'height', 
+            'marital_status', 'religion', 'community', 'profession',
+            'nationality', 'lives_in', 'grew_up_in',
+            'drinking_habits', 'smoking_habits', 'diet',
+            'interested_in_moving_abroad'
+        ]
+        extra_kwargs = {
+            'date_of_birth': {'format': '%d/%m/%Y'},
+        }       
+
+# Career Info Serializer
+class CareerDetailsUpdateSerializer(serializers.ModelSerializer):
+    # Read-only representations
+    qualification_name = serializers.StringRelatedField(source='qualification', read_only=True)
+    course_name = serializers.StringRelatedField(source='course', read_only=True)
+    profession_name = serializers.StringRelatedField(source='occupation', read_only=True)
+    sector_name = serializers.StringRelatedField(source='sector', read_only=True)
+    
+    # Writeable fields
+    qualification_id = serializers.PrimaryKeyRelatedField(
+        queryset=Qualification.objects.all(),
+        source='qualification',
+        required=False,
+        allow_null=True
+    )
+    course_id = serializers.PrimaryKeyRelatedField(
+        queryset=Course.objects.all(),
+        source='course',
+        required=False,
+        allow_null=True
+    )
+    profession_id = serializers.PrimaryKeyRelatedField(
+        queryset=Occupation.objects.all(),
+        source='occupation',
+        required=False,
+        allow_null=True
+    )
+    sector_id = serializers.PrimaryKeyRelatedField(
+        queryset=ListValue.objects.filter(type='sector'),
+        source='sector',
+        required=False,
+        allow_null=True
+    )
+    college_name = serializers.CharField(
+        source='coursedetail',
+        max_length=2000,
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
+    company_name = serializers.CharField(
+        source='company',
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
+    employment = serializers.CharField(
+        max_length=200,
+        required=False,
+        allow_null=True,
+        allow_blank=True
+    )
+    
+    class Meta:
+        model = Users
+        fields = [
+            # Education
+            'qualification_name', 'qualification_id',
+            'course_name', 'course_id',
+            'college_name',
+            
+            # Employment
+            'profession_name', 'profession_id',
+            'company_name',
+            'sector_name', 'sector_id',
+            'annual_income',
+            
+            # Other career-related fields
+            'employment'
+        ]
+        extra_kwargs = {
+            'college_name': {'required': False, 'allow_blank': True},
+            'company_name': {'required': False, 'allow_blank': True},
+            'annual_income': {'required': False, 'allow_null': True}
+        }
+
+    def update(self, instance, validated_data):
+        # Handle foreign key relationships
+        for field in ['qualification', 'course', 'occupation', 'sector']:
+            if field in validated_data:
+                setattr(instance, field, validated_data.pop(field))
+        
+        # Update remaining fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+            
+        instance.save()
+        return instance
+
+
+class PersonalityUpdateSerializer(serializers.Serializer):
+    personalities = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(queryset=Personality.objects.all()),
+        required=True
+    )
+
+    def validate_personalities(self, value):
+        if len(value) > 5:
+            raise serializers.ValidationError("You can select maximum 5 personalities")
+        return value
+
+class LocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Location
+        fields = ['id', 'location', 'taluk', 'district', 'state', 'pin']
+
+class UserLocationSerializer(serializers.ModelSerializer):
+    current_location_id = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.all(),
+        source='current_location',
+        write_only=True,
+        required=False
+    )
+    permanent_location_id = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.all(),
+        source='permanent_location',
+        write_only=True,
+        required=False
+    )
+
+    current_location = LocationSerializer(read_only=True)
+    permanent_location = LocationSerializer(read_only=True)
+
+    current_state = serializers.SerializerMethodField()
+    permanent_state = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Users
+        fields = [
+            'current_location',
+            'permanent_location',
+            'current_location_id',
+            'permanent_location_id',
+            'current_state',
+            'permanent_state',
+            'state',
+            'country_name',
+            'living_pin',
+            'pin',
+        ]
+
+    def get_current_state(self, obj):
+        if obj.current_location:
+            return obj.current_location.state
+        return None
+
+    def get_permanent_state(self, obj):
+        if obj.permanent_location:
+            return obj.permanent_location.state
+        return None
+
+class CurrentLocationUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['state', 'district', 'living_place', 'living_pin']
+
+class PermanentLocationUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['place', 'pin', 'country_name','permanent_district','permanent_state']
+
+class PhysicalAppearanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = [
+           
+            'weight',
+            'body_type',
+            'physical_status',
+            'complexion',
+            'blood_group',
+        ]
+
+
+
+class FamilySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = [
+            "family_type",
+            "family_status",  #  renamed from financial_status
+            "father_name",
+            "mother_name",
+            "father_alive",
+            "mother_alive",
+            "num_brothers",
+            "num_sisters",
+            "mother_occupation",
+        ]
+
+class ProfileSummaryHeaderSerializer(serializers.ModelSerializer):
+    age = serializers.SerializerMethodField()
+    profile_created_for = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+   
+    class Meta:
+        model = Users
+        fields = ['about_me', 'age', 'aec_id', 'height', 'profile_created_for','profile_image']
+
+    def get_age(self, obj):
+        if obj.dob:
+            today = date.today()
+            return today.year - obj.dob.year - ((today.month, today.day) < (obj.dob.month, obj.dob.day))
+        return None
+
+    def get_profile_image(self, obj):
+        return obj.profile_image  # from @property
+
+    def get_profile_created_for(self, obj):
+        return obj.get_profile_created_for_display()
+
+
+class AboutMeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['about_me']
+
+#Engage screen 
+class MatchedUserSerializerFull(serializers.ModelSerializer):
+    age = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    current_location = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Users
+        fields = ['id', 'first_name', 'last_name', 'profile_image', 'age', 'gender','height', 'religion', 'country', 'qualification', 'occupation','drink','smoke','current_location']
+
+    def get_age(self, obj):
+        if obj.dob:
+            today = timezone.now().date()
+            return today.year - obj.dob.year - ((today.month, today.day) < (obj.dob.month, obj.dob.day))
+        return None
+
+    def get_profile_image(self, obj):
+        return obj.profile_image  # from @property
+
+
+    def get_current_location(self, obj):
+        if obj.city and obj.state:
+            return f"{obj.city.name}, {obj.state.name}"
+        return None  
+
+
+
+
+
