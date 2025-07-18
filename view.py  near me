@@ -1,0 +1,2067 @@
+from rest_framework import serializers
+from rest_framework import generics
+from rest_framework.parsers import JSONParser
+from rest_framework import status, viewsets
+from rest_framework.decorators import api_view, permission_classes
+from django.core.mail import send_mail
+from django.conf import settings
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
+from django_filters import rest_framework as filters
+from django.views.decorators.http import require_GET
+import random
+from math import radians, cos, sin, asin, sqrt
+from django.db import transaction 
+from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
+import logging
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import NotFound
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from .models import Users,UserAlbum,UsersInterests,UsersPersonality
+from .serializers import  (UserBasicSerializer,BasicInfoSerializer,PhysicalMaritalSerializer,
+ CareerDetailsSerializer, SuccessStorySerializer, WeddingStoreSerializer, WeddingBannerSerializer,
+ HomePageSerializer, UsersInterestsSerializer, UsersPersonalitySerializer, UserAlbumSerializer,
+ PhotoPrivacySerializer, MatchedUserSerializer,ProfessionalUserSerializer,
+ UserEducationalMatchSerializer,UserContactSerializer,UpdateContactSerializer,VerifyEmailOTPSerializer,
+ BasicInfoUpdateSerializer,CareerDetailsUpdateSerializer,PersonalityUpdateSerializer,
+ CurrentLocationUpdateSerializer,PermanentLocationUpdateSerializer,PhysicalAppearanceSerializer,
+ FamilySerializer,AboutMeSerializer,ProfileSummaryHeaderSerializer,LocationSerializer,UserLocationSerializer,MatchedUserSerializerFull
+)
+from user_preference.models import UserPartnerPreference
+from user_preference.serializers import PartnerPreferenceSerializer
+from blogs.models import SuccessStory
+from store.models import WeddingStore, WeddingBanner
+from common.models import Activity, Country, ListValue, Interest, Personality,District,Location,Place
+from datetime import timedelta
+from django.utils.timezone import now
+from users.utils import calculate_profile_completion
+from django.core.cache import cache
+from faker import Faker
+import base64
+from django.core.files.base import ContentFile
+import uuid
+from django.db.models import Q
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.generics import UpdateAPIView
+from rest_framework.generics import RetrieveUpdateAPIView
+
+logger = logging.getLogger(__name__)
+
+fake = Faker()
+
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = Users.objects.filter(is_active=True)
+    serializer_class = UserBasicSerializer
+    #permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            return Users.objects.filter(is_active=True)
+        return Users.objects.filter(id=self.request.user.id, is_active=True)
+
+class HomePageAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        logger.info(f"Request received by HomePageAPIView from user {user.id}")
+
+        profile_completion = calculate_profile_completion(user)
+
+        country_data = None
+        if user.country:
+            try:
+                country_obj = Country.objects.get(id=user.country)
+                country_data = {'id': country_obj.id, 'name': country_obj.name}
+            except Country.DoesNotExist:
+                country_data = {'error': 'Country not found'}
+
+        # Define dummy data fallbacks
+        dummy_recently_joined = [
+            {'id': fake.random_int(min=1, max=1000), 'first_name': fake.first_name(), 'last_name': fake.last_name(), 'profile_image': fake.image_url()}
+            for _ in range(6)
+        ]
+        dummy_match_suggestions = [
+            {'id': fake.random_int(min=1, max=1000), 'first_name': fake.first_name(), 'last_name': fake.last_name(), 'profile_image': fake.image_url()}
+            for _ in range(6)
+        ]
+        dummy_who_viewed_you = [
+            {'id': fake.random_int(min=1, max=1000), 'first_name': fake.first_name(), 'last_name': fake.last_name(), 'profile_image': fake.image_url()}
+            for _ in range(6)
+        ]
+        dummy_success_stories = [
+            {'id': fake.random_int(min=1, max=1000), 'title': fake.sentence(), 'image': fake.image_url()}
+            for _ in range(5)
+        ]
+        dummy_wedding_services = [
+            {'id': fake.random_int(min=1, max=1000), 'store_name': fake.company(), 'image': fake.image_url(), 'location': fake.city()}
+            for _ in range(5)
+        ]
+        dummy_banners = [
+            {'id': fake.random_int(min=1, max=1000), 'image': fake.image_url(), 'banner_link': fake.url()}
+            for _ in range(3)
+        ]
+
+        # Check if dummy data is requested
+        use_dummy = request.GET.get('use_dummy') == 'true'
+
+        # Fetch real data with fallbacks
+        if use_dummy:
+            recently_joined = dummy_recently_joined
+            match_suggestions = dummy_match_suggestions
+            who_viewed_you = dummy_who_viewed_you
+            success_stories = dummy_success_stories
+            wedding_services = dummy_wedding_services
+            banners = dummy_banners
+        else:
+            recently_joined_queryset = Users.objects.filter(is_active=True).order_by('-created_at')[:6]
+            recently_joined = recently_joined_queryset if recently_joined_queryset.exists() else dummy_recently_joined
+            if not recently_joined_queryset.exists():
+                logger.info(f"No recently joined users found for user {user.id}, using dummy data.")
+
+            preference = UserPartnerPreference.objects.filter(user=user).first()
+            match_criteria = {'is_active': True}
+            exclude_ids = [user.id]
+
+            if preference:
+                if preference.religion_id:
+                    match_criteria['religion_id'] = preference.religion_id
+                if preference.country_living_id:
+                    match_criteria['country_id'] = preference.country_living_id
+                if preference.qualification_id:
+                    match_criteria['qualification_id'] = preference.qualification_id
+                if preference.occupation_id:
+                    match_criteria['occupation_id'] = preference.occupation_id
+                if preference.annual_income_id:
+                    match_criteria['income_id'] = preference.annual_income_id
+                if preference.diet_id:
+                    match_criteria['food_id'] = preference.diet_id
+                if preference.smoke_id:
+                    match_criteria['smoking_id'] = preference.smoke_id
+                if preference.drink_id:
+                    match_criteria['drinking_id'] = preference.drink_id
+
+            match_suggestions_queryset = Users.objects.filter(**match_criteria).exclude(id__in=exclude_ids).order_by('?')[:6]
+            match_suggestions = match_suggestions_queryset if match_suggestions_queryset.exists() else dummy_match_suggestions
+            if not match_suggestions_queryset.exists():
+                logger.info(f"No match suggestions found for user {user.id}, using dummy data.")
+
+            who_viewed_you_queryset = Users.objects.filter(
+                id__in=Activity.objects.filter(to=user, op="viewed_profile").values_list('user_id', flat=True).distinct()
+            ).order_by('?')[:6]
+            who_viewed_you = who_viewed_you_queryset if who_viewed_you_queryset.exists() else dummy_who_viewed_you
+            if not who_viewed_you_queryset.exists():
+                logger.info(f"No 'who viewed you' data found for user {user.id}, using dummy data.")
+
+            success_stories_cache_key = "success_stories_homepage"
+            success_stories = cache.get(success_stories_cache_key)
+            if not success_stories:
+                success_stories_queryset = SuccessStory.objects.filter(status=1).order_by('-created_at')[:5]
+                success_stories = success_stories_queryset if success_stories_queryset.exists() else dummy_success_stories
+                cache.set(success_stories_cache_key, success_stories, timeout=3600)
+                if not success_stories_queryset.exists():
+                    logger.info(f"No success stories found for user {user.id}, using dummy data.")
+
+            wedding_services_cache_key = "wedding_services_homepage"
+            wedding_services = cache.get(wedding_services_cache_key)
+            if not wedding_services:
+                wedding_services_queryset = WeddingStore.objects.filter(status=1).order_by('?')[:5]
+                wedding_services = wedding_services_queryset if wedding_services_queryset.exists() else dummy_wedding_services
+                cache.set(wedding_services_cache_key, wedding_services, timeout=3600)
+                if not wedding_services_queryset.exists():
+                    logger.info(f"No wedding services found for user {user.id}, using dummy data.")
+
+            banners_cache_key = "banners_homepage"
+            banners = cache.get(banners_cache_key)
+            if not banners:
+                banners_queryset = WeddingBanner.objects.all().order_by('-created_at')[:3]
+                banners = banners_queryset if banners_queryset.exists() else dummy_banners
+                cache.set(banners_cache_key, banners, timeout=3600)
+                if not banners_queryset.exists():
+                    logger.info(f"No banners found for user {user.id}, using dummy data.")
+
+        data = {
+            'recently_joined': recently_joined,
+            'match_suggestions': match_suggestions,
+            'who_viewed_you': who_viewed_you,
+            'success_stories': success_stories,
+            'wedding_services': wedding_services,
+            'banners': banners,
+            'profile_completion': profile_completion,
+            'user_id': user.id
+        }
+
+        serializer = HomePageSerializer(data, context={'request': request})
+        serialized_data = serializer.data
+
+        return Response(serialized_data, status=status.HTTP_200_OK)
+
+class RegisterAPIView(APIView):
+    authentication_classes = []  # No authentication required for registration
+    permission_classes = [AllowAny]  # Allow anyone to register
+
+    def post(self, request):
+        serializer = UserBasicSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "message": "User Account Created successfully",
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "user_id": user.id
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class OnboardingAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def validate_ids(self, model, ids, field_name):
+        """Validate that all IDs exist in the related model"""
+        if not ids:  # Skip if no IDs provided
+            return
+            
+        existing_ids = set(model.objects.filter(id__in=ids).values_list('id', flat=True))
+        missing_ids = [id for id in ids if id not in existing_ids]
+        if missing_ids:
+            raise serializers.ValidationError(
+                {field_name: f"Invalid IDs {missing_ids} - objects do not exist"}
+            )
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        errors = {}
+
+        # 1. Validate all foreign keys exist first
+        try:
+            # Validate user data foreign keys
+            user_data = data.get('user', {})
+            if 'marital_status' in user_data:
+                self.validate_ids(
+                    ListValue,  # Pass the model class, not a QuerySet
+                    [user_data['marital_status']],
+                    'marital_status'
+                )
+            if 'diet' in user_data:
+                self.validate_ids(
+                    ListValue,  # Pass the model class
+                    [user_data['diet']],
+                    'diet'
+                )
+            
+            # Validate interests
+            interest_ids = [i['interest'] for i in data.get('interests', []) if 'interest' in i]
+            self.validate_ids(Interest, interest_ids, 'interests')
+            
+            # Validate personalities
+            personality_ids = [p['personality'] for p in data.get('personalities', []) if 'personality' in p]
+            self.validate_ids(Personality, personality_ids, 'personalities')
+
+        except serializers.ValidationError as e:
+            errors.update(e.detail)
+
+        if errors:
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Update Basic User Info
+        try:
+            user_instance = Users.objects.get(id=user.id)
+        except Users.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        user_serializer = UsersSerializer(user_instance, data=user_data, partial=True)
+        if not user_serializer.is_valid():
+            return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user_serializer.save()
+
+        # 3. Save Interests
+        interests_data = data.get('interests', [])
+        for interest_data in interests_data:
+            if not UsersInterests.objects.filter(user=user, interest_id=interest_data.get('interest')).exists():
+                interest_serializer = UsersInterestsSerializer(data=interest_data)
+                if not interest_serializer.is_valid():
+                    return Response(interest_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                interest_serializer.save(user=user)
+
+        # 4. Save Personality Traits
+        personalities_data = data.get('personalities', [])
+        for personality_data in personalities_data:
+            if not UsersPersonality.objects.filter(user=user, personality_id=personality_data.get('personality')).exists():
+                personality_serializer = UsersPersonalitySerializer(data=personality_data)
+                if not personality_serializer.is_valid():
+                    return Response(personality_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                personality_serializer.save(user=user)
+
+        # 5. Partner Preferences
+        preference_data = data.get('partner_preference', {})
+        preference_instance, _ = UserPartnerPreference.objects.get_or_create(user=user)
+        preference_serializer = UserPartnerPreferenceSerializer(
+            preference_instance, 
+            data=preference_data, 
+            partial=True
+        )
+        if not preference_serializer.is_valid():
+            return Response(preference_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        preference_serializer.save()
+
+        # 6. Handle Base64 Images
+        photos_data = data.get('photos', [])
+        for photo_data in photos_data:
+            try:
+                # Decode Base64 image
+                format, imgstr = photo_data['image'].split(';base64,')
+                ext = format.split('/')[-1]
+                image_file = ContentFile(
+                    base64.b64decode(imgstr),
+                    name=f"{user.id}_photo_{uuid.uuid4().hex[:8]}.{ext}"
+                )
+                
+                # Save to UserAlbum
+                UserAlbum.objects.create(
+                    user=user,
+                    image=image_file,
+                    primary=photo_data.get('primary', False)
+                )
+            except Exception as e:
+                logger.error(f"Error processing image: {str(e)}")
+                return Response(
+                    {"error": f"Invalid image data: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        return Response(
+            {"message": "Onboarding completed successfully"}, 
+            status=status.HTTP_201_CREATED
+        )
+
+#onboarding splitup to each pages,
+class BasicInfoView(generics.UpdateAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = BasicInfoSerializer
+
+    def get_object(self):
+        # Fetch the Users profile linked to the authenticated user
+        return self.request.user
+
+    def post(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            "status": "success",
+            "message": "Basic information updated and onboarding step set to 1",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class InterestsView(generics.CreateAPIView):
+    serializer_class = UsersInterestsSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Clear old interests
+        UsersInterests.objects.filter(user=user).delete()
+
+        # Create new ones
+        for interest in serializer.validated_data['interest']:
+            UsersInterests.objects.create(user=user, interest=interest)
+
+        # Advance onboarding
+        user.onboarding_steps = 2
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status": "success",
+            "message": "Interests updated and onboarding step set to 2",
+            "data": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+class PersonalityView(generics.CreateAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = UsersPersonalitySerializer
+
+    def create(self, request, *args, **kwargs):
+        user = request.user
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Clear out old personalities
+        UsersPersonality.objects.filter(user=user).delete()
+
+        # Create new ones
+        for personality in serializer.validated_data['personality']:
+            UsersPersonality.objects.create(user=user, personality=personality)
+
+        # Advance onboarding_steps to 3
+        user.onboarding_steps = 3
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status": "success",
+            "message": "Personalities updated and onboarding step set to 3",
+            "data": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+class PhysicalMaritalView(generics.UpdateAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+    serializer_class       = PhysicalMaritalSerializer
+
+    def get_object(self):
+        # we're updating the current user
+        return self.request.user
+
+    def post(self, request, *args, **kwargs):
+        user       = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        # Advance onboarding_steps to 4
+        user.onboarding_steps = 4
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status":  "success",
+            "message": "Physical and marital info updated, onboarding step set to 4",
+            "data":    serializer.data
+        }, status=status.HTTP_200_OK)
+
+class CareerDetailsView(generics.UpdateAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+    serializer_class       = CareerDetailsSerializer
+
+    def get_object(self):
+        return self.request.user
+
+    def post(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        # Advance onboarding_steps to 5
+        user.onboarding_steps = 5
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status":  "success",
+            "message": "Career details updated, onboarding step set to 5",
+            "data":    serializer.data
+        }, status=status.HTTP_200_OK)
+
+class PartnerPreferenceView(generics.UpdateAPIView):
+    """
+    GET     -> retrieve (or create) the user's partner preference
+    PATCH   -> partial update (only fields sent)
+    PUT     -> full update (all fields)
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+    serializer_class       = PartnerPreferenceSerializer
+
+    def get_object(self):
+        pref, _ = UserPartnerPreference.objects.get_or_create(user=self.request.user)
+        return pref
+
+    def _normalize_list_fields(self, data):
+        for field in ('qualification', 'occupation'):
+            if field in data and not isinstance(data[field], (list, tuple)):
+                data[field] = [data[field]]
+        return data
+
+    def patch(self, request, *args, **kwargs):
+        return self._handle_update(request, partial=True, verb='PATCH')
+
+    def put(self, request, *args, **kwargs):
+        return self._handle_update(request, partial=False, verb='PUT')
+
+    def _handle_update(self, request, partial, verb):
+        pref = self.get_object()
+        data = request.data.copy()
+        data = self._normalize_list_fields(data)
+
+        serializer = self.get_serializer(pref, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        return Response({
+            "status": "success",
+            "message": (
+                f"Partner preferences {'partially' if partial else 'fully'} updated "
+                f"(via {verb}), onboarding step set to 6"
+            ),
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def perform_update(self, serializer):
+        pref = serializer.save()
+        user = self.request.user
+        user.onboarding_steps = 6
+        user.save(update_fields=['onboarding_steps'])
+        return pref
+'''
+# using json base64 
+class UploadPhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        photos_data = request.data.get('photos', [])
+
+        if not photos_data:
+            return Response({
+                "status": "error",
+                "message": "No photos provided.",
+                "data": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(photos_data) > 6:
+            return Response({
+                "status": "error",
+                "message": "You can only upload up to 6 photos.",
+                "data": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        saved_photos = []
+        primary_set = False
+
+        for photo_data in photos_data:
+            serializer = UserAlbumSerializer(data=photo_data, context={'request': request})
+            if serializer.is_valid():
+                photo = serializer.save(user=user)
+                
+                # Handle primary image logic
+                if serializer.validated_data.get("primary", False) == 1:
+                    UserAlbum.objects.filter(user=user, primary=1).exclude(id=photo.id).update(primary=2)
+                    user.profile_image = photo.image
+                    user.save(update_fields=['profile_image'])
+                    primary_set = True
+
+                saved_photos.append({
+                    "id": photo.id,
+                    "url": photo.image.url,
+                    "primary": photo.primary == 1,
+                    "is_private": photo.is_private
+                })
+            else:
+                return Response({
+                    "status": "error",
+                    "message": "Invalid photo data.",
+                    "data": serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # If no primary image explicitly set, use the first uploaded
+        if not primary_set and saved_photos:
+            first_photo = UserAlbum.objects.get(id=saved_photos[0]["id"])
+            first_photo.primary = 1
+            first_photo.save(update_fields=['primary'])
+            user.profile_image = first_photo.image
+            user.save(update_fields=['profile_image'])
+            saved_photos[0]["primary"] = True
+
+        # Advance onboarding step
+        user.onboarding_steps = 7
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status": "success",
+            "message": "Photos uploaded successfully.",
+            "data": {
+                "aec_id" :user.aec_id,
+                "profile_image": user.profile_image.url if user.profile_image else None,
+                "photos": saved_photos
+            }
+        }, status=status.HTTP_201_CREATED)
+'''
+class UploadPhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        files = request.FILES.getlist('photos')  # Expect multiple files with key 'photos'
+
+        if not files:
+            return Response({
+                "status": "error",
+                "message": "No photos provided.",
+                "data": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(files) > 6:
+            return Response({
+                "status": "error",
+                "message": "You can only upload up to 6 photos.",
+                "data": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        saved_photos = []
+        primary_set = False
+
+        # Convert string 'true'/'false' to actual boolean
+        primary_flag = str(request.data.get('primary', 'false')).lower() == 'true'
+        is_private_flag = str(request.data.get('is_private', 'false')).lower() == 'true'
+
+        for uploaded_file in files:
+            photo_data = {
+                'image': uploaded_file,
+                'primary': primary_flag,
+                'is_private': is_private_flag
+            }
+
+            serializer = UserAlbumSerializer(data=photo_data, context={'request': request})
+            if serializer.is_valid():
+                photo = serializer.save(user=user)
+
+                if photo.primary == 1:  # Based on serializer's conversion
+                    UserAlbum.objects.filter(user=user, primary=1).exclude(id=photo.id).update(primary=2)
+                    user.profile_image = photo.image
+                    user.save(update_fields=['profile_image'])
+                    primary_set = True
+
+                saved_photos.append({
+                    "id": photo.id,
+                    "url": photo.image.url,
+                    "primary": photo.primary == 1,
+                    "is_private": photo.is_private
+                })
+            else:
+                return Response({
+                    "status": "error",
+                    "message": "Invalid photo data.",
+                    "data": serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set the first photo as primary if none explicitly marked
+        if not primary_set and saved_photos:
+            first_photo = UserAlbum.objects.get(id=saved_photos[0]["id"])
+            first_photo.primary = 1
+            first_photo.save(update_fields=['primary'])
+            user.profile_image = first_photo.image
+            user.save(update_fields=['profile_image'])
+            saved_photos[0]["primary"] = True
+
+        user.onboarding_steps = 7
+        user.save(update_fields=['onboarding_steps'])
+
+        return Response({
+            "status": "success",
+            "message": "Photos uploaded successfully.",
+            "data": {
+                "aec_id": user.aec_id,
+                "profile_image": user.profile_image.url if user.profile_image else None,
+                "photos": saved_photos
+            }
+        }, status=status.HTTP_201_CREATED)
+
+
+class SetPrimaryPhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        photo_id = request.data.get('photo_id')
+
+        try:
+            new_primary = UserAlbum.objects.get(id=photo_id, user=user)
+        except UserAlbum.DoesNotExist:
+            return Response({
+                "status": "error",
+                "message": "Photo not found."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Unset current primary
+        UserAlbum.objects.filter(user=user, primary=1).update(primary=2)
+
+        # Set new primary
+        new_primary.primary = 1
+        new_primary.save(update_fields=['primary'])
+
+        # Update user profile image
+        user.profile_image = new_primary.image
+        user.save(update_fields=['profile_image'])
+
+        return Response({
+            "status": "success",
+            "message": "Primary photo updated successfully.",
+            "data": {
+                "photo_id": new_primary.id,
+                "image_url": new_primary.image.url,
+                "profile_image": user.profile_image.url
+            }
+        }, status=status.HTTP_200_OK)
+
+
+
+class PhotoPrivacyToggleView(generics.GenericAPIView):
+    """
+    POST /api/users/photos/privacy-toggle/
+    Body: { "is_private": true }
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+    serializer_class       = PhotoPrivacySerializer
+
+    def post(self, request, *args, **kwargs):
+        # validate input
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        is_private = serializer.validated_data['is_private']
+        user = request.user
+
+        # bulk‐update all of user’s photos
+        photos_qs = UserAlbum.objects.filter(user=user)
+        photos_qs.update(is_private=is_private)
+
+        # serialize updated photos
+        data = UserAlbumSerializer(photos_qs, many=True).data
+
+        return Response({
+            "status":  "success",
+            "message": f"All photos set to {'private' if is_private else 'public'}.",
+            "data":    data
+        }, status=status.HTTP_200_OK)
+
+class DeletePhotoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, photo_id):
+        user = request.user
+
+        try:
+            photo = UserAlbum.objects.get(id=photo_id, user=user)
+        except UserAlbum.DoesNotExist:
+            return Response({
+                "status": "error",
+                "message": "Photo not found."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # If deleting the primary photo, unset profile image
+        if photo.primary == 1:
+            user.profile_image = None
+            user.save(update_fields=['profile_image'])
+
+        photo.delete()
+
+        return Response({
+            "status": "success",
+            "message": "Photo deleted successfully."
+        }, status=status.HTTP_200_OK)
+
+class ListUserPhotosView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserAlbumSerializer
+
+    def get_queryset(self):
+        return UserAlbum.objects.filter(user=self.request.user).order_by('-created_at')
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        
+        return Response({
+            "status": "success",
+            "message": "Photos retrieved successfully.",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+# For You Page
+class MyMatchesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Load user preferences
+        try:
+            preferences = UserPartnerPreference.objects.get(user=user)
+        except UserPartnerPreference.DoesNotExist:
+            preferences = None
+
+        # Start with all users except the current one
+        queryset = Users.objects.exclude(id=user.id)
+        # Gender
+        opposite_gender = 2 if user.gender == 1 else 1
+        queryset = queryset.filter(gender=opposite_gender)
+            
+
+        if preferences:
+            # Age
+            if preferences.age:
+                age_range = preferences.age.split('-')
+                if len(age_range) == 2:
+                    try:
+                        min_age = int(age_range[0])
+                        max_age = int(age_range[1])
+                        queryset = queryset.filter(age__gte=min_age, age__lte=max_age)
+                    except ValueError:
+                        pass
+
+
+
+            # Religion
+            if preferences.religion:
+                queryset = queryset.filter(religion=preferences.religion)
+
+            # Country
+            if preferences.country_living:
+                queryset = queryset.filter(country=preferences.country_living)
+
+            # Qualification (M2M)
+            if preferences.qualification.exists():
+                queryset = queryset.filter(qualification__in=preferences.qualification.all())
+
+            # Occupation (M2M)
+            if preferences.occupation.exists():
+                queryset = queryset.filter(occupation__in=preferences.occupation.all())
+
+            # Annual Income
+            if preferences.annual_income:
+                queryset = queryset.filter(annual_income__gte=preferences.annual_income)
+
+            # Marital Status
+            if preferences.marital_status:
+                queryset = queryset.filter(marital_status=preferences.marital_status)
+
+            # Height
+            if preferences.height:
+                try:
+                    hmin, hmax = [int(x) for x in preferences.height.replace('cm', '').split('-')]
+                    queryset = queryset.filter(height__gte=hmin, height__lte=hmax)
+                except ValueError:
+                    pass
+
+            # Weight
+            if preferences.weight:
+                try:
+                    wmin, wmax = [int(x) for x in preferences.weight.replace('Kg', '').split('-')]
+                    queryset = queryset.filter(weight__gte=wmin, weight__lte=wmax)
+                except ValueError:
+                    pass
+
+            # Smoke
+            if preferences.smoke:
+                queryset = queryset.filter(smoke=preferences.smoke)
+
+            # Drink
+            if preferences.drink:
+                queryset = queryset.filter(drink=preferences.drink) 
+
+            # Community
+            if preferences.community:
+                queryset = queryset.filter(caste=preferences.community)
+
+            # Complexion
+            if preferences.complexion:
+                queryset = queryset.filter(complexion=preferences.complexion)
+
+        # === DEBUG: print raw SQL to console/log ===
+        #print("MyMatches raw SQL:", queryset.distinct().query)
+
+        # Pagination
+        paginator = PageNumberPagination()
+        paginator.page_size = 6
+        page = paginator.paginate_queryset(queryset.distinct(), request)
+        serializer = MatchedUserSerializer(page, many=True)
+
+        return Response({
+            "status": "success",
+            "message": "Matches fetched successfully.",
+            "data": serializer.data,
+            "count": paginator.page.paginator.count,
+            "next": paginator.get_next_link(),
+            "previous": paginator.get_previous_link(),
+        }, status=status.HTTP_200_OK)
+
+       
+
+class ProfessionalMatchesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        try:
+            pref = user.partner_preference
+        except UserPartnerPreference.DoesNotExist:
+            return Response({"error": "Partner preference not set."}, status=400)
+
+        matches = Users.objects.filter(is_active=True).exclude(id=user.id)
+
+        # Age Range
+        if pref.age:
+            try:
+                age_range = pref.age.split('-')
+                min_age = int(age_range[0])
+                max_age = int(age_range[1])
+                matches = matches.filter(age__gte=min_age, age__lte=max_age)
+            except (ValueError, IndexError):
+                pass  # Invalid format, skip age filter
+
+
+        # Qualifications
+        if pref.qualification.exists():
+            matches = matches.filter(qualification__in=pref.qualification.all())
+
+
+        # Occupations
+        if pref.occupation.exists():
+            matches = matches.filter(occupation__in=pref.occupation.all())
+
+        # Annual Income (min income match)
+        if pref.annual_income:
+            matches = matches.filter(annual_income__gte=pref.annual_income)
+        
+        # Marital Status
+        if pref.marital_status:
+            matches = matches.filter(marital_status=pref.marital_status)
+        
+        # Sector
+        sector = request.query_params.get('sector', None)
+        if sector:
+            matches = matches.filter(sector__sector_name__icontains=sector)
+
+        # Course
+        course = request.query_params.get('course', None)
+        if course:
+            matches = matches.filter(course__course_name__icontains=course)
+
+        matches = matches.distinct()
+
+        # Pagination
+        paginator = PageNumberPagination()
+        paginator.page_size = 6  # your page size
+        result_page = paginator.paginate_queryset(matches, request, view=self)
+
+        serializer = ProfessionalUserSerializer(matches, many=True, context={'request': request})
+        return Response(serializer.data)
+
+class ViewProfileAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        viewer = request.user
+        try:
+            viewed_user = Users.objects.get(id=user_id)
+
+            # Log the view only if the user is not viewing their own profile
+            if viewer.id != viewed_user.id:
+                Activity.objects.create(
+                    user=viewer,
+                    op="viewed_profile",
+                    to=viewed_user,
+                    ip_address=self.get_client_ip(request)
+                )
+
+            serializer = UserBasicSerializer(viewed_user, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Users.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+
+class RecentlyViewedProfilesAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        use_dummy = request.GET.get('use_dummy') == 'true'
+
+        # Dummy fallback data
+        dummy_recently_viewed = [
+            {
+                'id': fake.random_int(min=1, max=1000),
+                'first_name': fake.first_name(),
+                'last_name': fake.last_name(),
+                'profile_image': fake.image_url()
+            }
+            for _ in range(6)
+        ]
+
+        if use_dummy:
+            recently_viewed = dummy_recently_viewed
+        else:
+            # Only consider last 30 days
+            time_threshold = now() - timedelta(days=30)
+
+            # Get IDs of users this user has viewed
+            viewed_user_ids = (
+                Activity.objects
+                .filter(user=user, op="viewed_profile", to__isnull=False, created_at__gte=time_threshold)
+                .order_by('-created_at')
+                .values_list('to_id', flat=True)
+                .distinct()
+            )
+
+            recently_viewed_queryset = (
+                Users.objects
+                .filter(id__in=viewed_user_ids)
+                .order_by('-date_joined')[:6]  # Adjust sort if needed
+            )
+
+            if recently_viewed_queryset.exists():
+                recently_viewed = recently_viewed_queryset
+            else:
+                recently_viewed = dummy_recently_viewed
+                logger.info(f"No recently viewed profiles found for user {user.id}, using dummy data.")
+
+        serializer = UserBasicSerializer(recently_viewed, many=True, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+  
+#Educational matches
+class EducationalMatchAPIView(APIView):  
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        try:
+            pref = user.partner_preference
+        except UserPartnerPreference.DoesNotExist:
+            return Response({"error": "Partner preference not set."}, status=400)
+
+        matches = Users.objects.filter(is_active=True).exclude(id=user.id)
+
+
+        # Qualifications
+        if pref.qualification.exists():
+            matches = matches.filter(qualification__in=pref.qualification.all())
+       
+
+        # Course
+        course = request.query_params.get('course', None)
+        if course:
+            matches = matches.filter(course__course_name__icontains=course)
+
+        matches = matches.distinct()
+
+        # Pagination
+        paginator = PageNumberPagination()
+        paginator.page_size = 6  # your page size
+        result_page = paginator.paginate_queryset(matches, request, view=self)
+
+        serializer = UserEducationalMatchSerializer(matches, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+# User profile page starts here
+# my interest
+class MyInterestsView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get interests of the currently logged-in user"""
+        interests = UsersInterests.objects.filter(user=request.user).select_related('interest')
+        data = [{"id": i.interest.id, "name": i.interest.name} for i in interests]
+        return Response({
+            "status": "success",
+            "message": "Interests fetched successfully.",
+            "data": data
+        })
+
+    def put(self, request):
+        """Update interests of the currently logged-in user"""
+        serializer = UsersInterestsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():  # Ensure all operations succeed or fail together
+            UsersInterests.objects.filter(user=request.user).delete()
+            for interest in serializer.validated_data['interest']:
+                UsersInterests.objects.create(user=request.user, interest=interest)
+        
+        return Response({
+            "status": "success",
+            "message": "Interests updated successfully.",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+# my contact info
+
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def contact_info(request):
+    user = request.user
+    
+    if request.method == 'GET':
+        serializer = UserContactSerializer(user)
+        return Response({
+            "status": "success",
+            "message":"contact info fetched successfully",
+            "data": serializer.data
+        })
+
+    elif request.method == 'PATCH':
+        serializer = UpdateContactSerializer(data=request.data, context={'user': user})
+        
+        if not serializer.is_valid():
+            return Response({
+                "status": "error",
+                "errors": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                update_data = {}
+                email = serializer.validated_data.get('email')
+                
+                # Email update logic
+                if email is not None:  # Handles both new email and clearing email
+                    if email and email != user.email:
+                        otp = str(random.randint(100000, 999999))
+                        update_data.update({
+                            'email': email,
+                            'email_verification_code': otp,
+                            'email_verified': False
+                        })
+                        send_verification_email(email, otp)
+                    else:
+                        update_data['email'] = email
+                
+                # Phone/whatsapp updates
+                for field in ['phone_number', 'countrycode', 
+                            'whatsapp_number', 'whatsapp_countrycode']:
+                    if field in serializer.validated_data:
+                        update_data[field] = serializer.validated_data[field]
+                
+                Users.objects.filter(id=user.id).update(**update_data)
+                updated_user = Users.objects.get(id=user.id)
+                
+                return Response({
+                    "status": "success",
+                    "data": UserContactSerializer(updated_user).data,
+                    "verification_sent": bool(email and email != user.email)
+                })
+                
+        except Exception as e:
+            logger.error(f"Contact update failed: {str(e)}")
+            return Response({
+                "status": "error",
+                "message": "An error occurred during update"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def resend_email_otp(request):
+    user = request.user
+    cache_key = f'otp_cooldown_{user.id}'
+
+    if user.email_verified:
+        return Response({
+            "status": "success",
+            "message": "Email already verified"
+        })
+
+    if cache.get(cache_key):
+        return Response({
+            "status": "error",
+            "message": f"Please wait {cache.ttl(cache_key)} seconds before retrying"
+        }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    otp = str(random.randint(100000, 999999))
+    user.email_verification_code = otp
+    user.save()
+    cache.set(cache_key, True, timeout=60)
+
+    try:
+        send_mail(
+            subject='Your Verification Code',
+            message=f'Your OTP is: {otp}',
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=render_to_string('email/verification.html', {'otp': otp})
+        )
+    except Exception as e:
+        logger.error(f"Email send failed: {str(e)}")
+        return Response({
+            "status": "error",
+            "message": "Failed to send verification email"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({
+        "status": "success",
+        "message": "OTP sent successfully",
+        "cooldown": 60
+    })
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def verify_email_otp(request):
+    user = request.user
+    serializer = VerifyEmailOTPSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response({
+            "status": "error",
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    cache_key = f'otp_attempts_{user.id}'
+    attempts = cache.get(cache_key, 0)
+    
+    if attempts >= 5:
+        return Response({
+            "status": "error",
+            "message": "Too many attempts. Please request a new OTP."
+        }, status=status.HTTP_403_FORBIDDEN)
+
+    if user.email_verification_code == serializer.validated_data['otp']:
+        with transaction.atomic():
+            user.email_verified = True
+            user.email_verification_code = None
+            user.save()
+            cache.delete(cache_key)
+        
+        return Response({
+            "status": "success",
+            "message": "Email verified successfully"
+        })
+    else:
+        cache.set(cache_key, attempts + 1, timeout=3600)
+        return Response({
+            "status": "error",
+            "message": "Invalid OTP",
+            "attempts_remaining": 5 - (attempts + 1)
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+def send_verification_email(email, otp):
+    """Helper function for sending verification emails"""
+    send_mail(
+        subject='Verify Your Email',
+        message=f'Your verification code is: {otp}',
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[email],
+        html_message=render_to_string('email/verification.html', {'otp': otp})
+    )
+
+# Test email sending
+@require_GET
+def send_test_email(request):
+    try:
+        send_mail(
+            subject='Test Email from Click & Marry',
+            message='This is a test email sent from your Django backend.',
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=['beemabasheer79@gmail.com'],  # change this to your test recipient
+            fail_silently=False,
+        )
+        return JsonResponse({'message': 'Test email sent successfully!'})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+''''
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def resend_email_otp(request):
+    user = request.user
+
+    if user.email_verified:
+        return Response({
+            "status": "Success",
+            "message": "Email already verified."
+        }, status=status.HTTP_200_OK)
+
+    # Generate and send new OTP
+    otp = str(random.randint(100000, 999999))
+    user.email_verification_code = otp
+    user.save()
+
+    try:
+        send_mail(
+            subject='Resend Verification Code',
+            message=f'Your verification code is: {otp}',
+            from_email='noreply@clickandmarry.com',
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        return Response({
+            "status": "Error",
+            "message": "Failed to send email."
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({
+        "status": "Success",
+        "message": "Verification code sent successfully."
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def verify_email_otp(request):
+    user = request.user
+    serializer = VerifyEmailOTPSerializer(data=request.data)
+
+    if serializer.is_valid():
+        otp = serializer.validated_data.get('otp')
+
+        if user.email_verification_code == otp:
+            user.email_verified = True
+            user.email_verification_code = None  # Clear OTP after success
+            user.save()
+
+            return Response({
+                "status": "Success",
+                "message": "Email verified successfully."
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                "status": "Error",
+                "message": "Invalid verification code."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+'''
+
+class BasicInfoUpdateAPIView(generics.RetrieveUpdateAPIView):
+    """
+    API endpoint for retrieving and updating user's basic info information.
+    
+    Supports:
+    - GET: Retrieve current user's basic info
+    - PUT: Update all fields
+    - PATCH: Partial update of fields
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = BasicInfoUpdateSerializer
+    
+    def get_object(self):
+        return self.request.user
+
+    def get(self, request, *args, **kwargs):
+        """
+        Retrieve the user's basic profile information.
+        """
+        user = self.get_object()
+        serializer = self.get_serializer(user)
+        
+        return Response({
+            "status": "success",
+            "message": "Basuc account info retrieved successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        """
+        Update all fields of the user's basic profile information.
+        """
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response({
+            "status": "success",
+            "message": "Basic info updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def patch(self, request, *args, **kwargs):
+        """
+        Partially update the user's basic profile information.
+        """
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response({
+            "status": "success",
+            "message": "Basic info partially updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class UserCareerUpdateView(generics.RetrieveUpdateAPIView):
+    """
+    API endpoint for managing user's career details
+    GET: Retrieve career details
+    PUT/PATCH: Update career details
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = CareerDetailsUpdateSerializer
+
+    def get_object(self):
+        return self.request.user
+
+    def get(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user)
+        
+        return Response({
+            "status": "success",
+            "message": "Career details retrieved successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response({
+            "status": "success",
+            "message": "Career details updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def patch(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response({
+            "status": "success",
+            "message": "Career details partially updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class MyPersonalityView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get personalities of the currently logged-in user"""
+        personalities = UsersPersonality.objects.filter(user=request.user).select_related('personality')
+        data = [{"id": p.personality.id, "name": p.personality.name} for p in personalities]
+        return Response({
+            "status": "success",
+            "message": "Personalities fetched successfully.",
+            "data": data
+        })
+
+    def put(self, request):
+        """Update personalities of the currently logged-in user"""
+        serializer = PersonalityUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        with transaction.atomic():  # Ensure all operations succeed or fail together
+            UsersPersonality.objects.filter(user=request.user).delete()
+            for personality in serializer.validated_data['personalities']:
+                UsersPersonality.objects.create(user=request.user, personality=personality)
+        
+        # Return the updated list of personalities
+        updated_personalities = UsersPersonality.objects.filter(user=request.user).select_related('personality')
+        data = [{"id": p.personality.id, "name": p.personality.name} for p in updated_personalities]
+        
+        return Response({
+            "status": "success",
+            "message": "Personalities updated successfully.",
+            "data": data
+        }, status=status.HTTP_200_OK)
+
+
+class CurrentLocationView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, user_id=None):
+        if user_id:
+            user = get_object_or_404(Users, id=user_id)
+        else:
+            user = request.user
+        serializer = UserLocationSerializer(user)
+        return Response({
+            "status": "Success",
+            "message": "Current location fetched successfully",
+            "data": {
+                "state": user.state,
+                "district": user.district.district if user.district else None,
+                "town": user.living_place.name if user.living_place else None,
+                "pincode": user.living_pin
+            }
+        })
+
+    def put(self, request):
+        user = request.user
+        serializer = CurrentLocationUpdateSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            user.refresh_from_db()
+            return Response({
+                "status": "Success",
+                "message": "Current location updated successfully",
+                "data": {
+                    "state": user.state,
+                    "district": user.district.district if user.district else None,
+                    "town": user.living_place.name if user.living_place else None,
+                    "pincode": user.living_pin
+                }
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PermanentLocationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_permanent_data(self, user):
+        place = user.place
+        district = user.permanent_district
+        permanent_state = district.state if district else None
+
+        # If country is from a related model (e.g., Place or another model), fetch here
+        country_name = user.country_name  # or logic to derive if necessary
+
+        return {
+            "status": "Success",
+            "message": "Permanent location fetched successfully",
+            "data": {
+                "state_name": permanent_state,
+                "district": district.district if district else None,
+                "town": place.name if place else None,
+                "pincode": user.pin,
+                "country": country_name
+            }
+        }
+
+    def get(self, request):
+        return Response(self.get_permanent_data(request.user))
+
+    def put(self, request):
+        user = request.user
+        serializer = PermanentLocationUpdateSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "status": "Success",
+                "message": "Permanent location updated successfully",
+                "data": self.get_permanent_data(user)
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LocationSearchView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        search = request.query_params.get('search', '')
+        locations = Location.objects.filter(
+            Q(location__icontains=search) |
+            Q(district__icontains=search) |
+            Q(state__icontains=search) |
+            Q(taluk__icontains=search)
+        ).order_by('location')[:10]
+
+        serializer = LocationSerializer(locations, many=True)
+        return Response({
+            "message":"Location fetched successfully",
+            "status": "success",
+            "data": serializer.data
+        })
+
+class UserLocationView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id=None):
+        if user_id:
+            user = get_object_or_404(Users, id=user_id)
+        else:
+            user = request.user
+        serializer = UserLocationSerializer(user)
+        return Response({
+            "status": "success",
+            "data": serializer.data
+        })
+
+    def put(self, request):
+        user = request.user
+        data = request.data
+
+        with transaction.atomic():
+            # --- Current Location ---
+            current = data.get('current_location', {})
+            if current:
+                loc_id = current.get('id')
+                if loc_id:
+                    try:
+                        loc = Location.objects.get(id=loc_id)
+                        user.current_location = loc
+                        user.state = loc.state
+                        user.district = District.objects.filter(district=loc.district).first()
+                        user.living_place = Place.objects.filter(name=loc.location).first()
+                        user.living_pin = loc.pin
+                        user.lat = loc.lat
+                        user.lng = loc.lng
+                    except Location.DoesNotExist:
+                        return Response({"detail": "Invalid current location ID."}, status=404)
+                else:
+                    user.state = current.get('state', user.state)
+                    user.living_pin = current.get('pincode', user.living_pin)
+
+            # --- Permanent Location ---
+            permanent = data.get('permanent_location', {})
+            if permanent:
+                loc_id = permanent.get('id')
+                if loc_id:
+                    try:
+                        loc = Location.objects.get(id=loc_id)
+                        user.permanent_location = loc
+                        user.permanent_state = loc.state  
+                        user.permanent_district = District.objects.filter(district=loc.district).first()
+                        user.place = Place.objects.filter(name=loc.location).first()
+                        user.pin = loc.pin
+                    except Location.DoesNotExist:
+                        return Response({"detail": "Invalid permanent location ID."}, status=404)
+                else:
+                    user.permanent_state = permanent.get('state', user.permanent_state)
+                    user.pin = permanent.get('pincode', user.pin)
+
+            user.save()
+
+        return Response({
+            "status": "success",
+            "message": "Location updated successfully",
+            "data": UserLocationSerializer(user).data
+        }, status=status.HTTP_200_OK)
+
+
+
+class PhysicalAppearanceUpdateView(generics.GenericAPIView):
+    serializer_class = PhysicalAppearanceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+    def get(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_object())
+        return Response({
+            "status": "success",
+            "message": "Physical appearance fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            "status": "success",
+            "message": "Physical appearance updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class FamilyDetailUpdateView(RetrieveUpdateAPIView):
+    queryset = Users.objects.all()
+    serializer_class = FamilySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+    def get(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_object())
+        return Response({
+            "status": "success",
+            "message": "Family data fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def put(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            "status": "success",
+            "message": "Family data updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class PartnerPreferenceDetailUpdateView(RetrieveUpdateAPIView):
+    serializer_class = PartnerPreferenceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        # Get or create partner preference for the authenticated user
+        obj, _ = UserPartnerPreference.objects.get_or_create(user=self.request.user)
+        return obj
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            "status": "success",
+            "message": "Partner preference fetched successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            "status": "success",
+            "message": "Partner preference updated successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class AboutMeUpdateView(RetrieveUpdateAPIView):
+    serializer_class = AboutMeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
+
+def get_profile_summary(user):
+    user_interests_qs = UsersInterests.objects.filter(user=user).select_related('interest')
+    interests = [{"id": ui.interest.id, "name": ui.interest.name} for ui in user_interests_qs]
+
+    user_personalities_qs = UsersPersonality.objects.filter(user=user).select_related('personality')
+    personalities = [{"id": up.personality.id, "name": up.personality.name} for up in user_personalities_qs]
+
+    photos_qs = UserAlbum.objects.filter(user=user).order_by('-created_at')
+
+    partner_pref, _ = UserPartnerPreference.objects.get_or_create(user=user)
+
+    return {
+        "profile_header": ProfileSummaryHeaderSerializer(user).data or None,
+        "basic_info": BasicInfoUpdateSerializer(user).data or None,
+        "contact": UserContactSerializer(user).data or None,
+        "interests": interests,
+        "personalities": personalities,
+        "career_info": CareerDetailsUpdateSerializer(user).data,
+        "current_location": CurrentLocationUpdateSerializer(user).data,
+        "permanent_location": PermanentLocationUpdateSerializer(user).data,
+        "physical_appearance": PhysicalAppearanceSerializer(user).data,
+        "family_info": FamilySerializer(user).data,
+        "partner_preference": PartnerPreferenceSerializer(partner_pref).data,
+        "photos": UserAlbumSerializer(photos_qs, many=True).data,
+    }
+
+class ProfileSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        
+        profile_data = get_profile_summary(user)
+
+        return Response({
+            "status": "success",
+            "message": "User profile summary fetched successfully",
+            "data": profile_data
+        }, status=status.HTTP_200_OK)
+
+# person profile
+class PersonProfileView(APIView):
+    permission_classes = [IsAuthenticated]  # or AllowAny if public
+
+    def get(self, request, user_id):
+        try:
+            user = Users.objects.get(id=user_id, is_active=True)
+        except Users.DoesNotExist:
+            return Response({"detail": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        profile_data = get_profile_summary(user)
+
+        # Optional: mask phone/email if viewing others' profile
+        if request.user != user:
+            contact = profile_data.get("contact", {})
+            contact["phone"] = None
+            contact["email"] = None
+            profile_data["contact"] = contact  # Ensure updated
+
+        return Response({
+            "status": "success",
+            "message": "Person profile fetched successfully",
+            "data": profile_data
+        }, status=status.HTTP_200_OK)
+
+#engage screen 
+class FilterMatchesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # 1) Base QS: exclude self + force opposite gender
+        #    (Users.gender is an IntegerField: 1=Male, 2=Female, 3=Other)
+        queryset = Users.objects.exclude(id=user.id)
+        if user.gender:
+            opposite_gender = 2 if user.gender == 1 else 1 if user.gender == 2 else None
+            if opposite_gender:
+                queryset = queryset.filter(gender=opposite_gender)
+            # If user.gender == 3 (Other), you can decide whether to show all or no filter:
+            # e.g. queryset = queryset
+
+        # 2) Read filter params from query string
+        qp = request.query_params
+
+        # — Age Min/Max (age is an IntegerField)
+        age_min = qp.get("age_min")
+        age_max = qp.get("age_max")
+        if age_min:
+            try:
+                queryset = queryset.filter(age__gte=int(age_min))
+            except (ValueError, TypeError):
+                pass
+        if age_max:
+            try:
+                queryset = queryset.filter(age__lte=int(age_max))
+            except (ValueError, TypeError):
+                pass
+
+        # — Height Min/Max (height is IntegerField, cm)
+        height_min = qp.get("height_min")
+        height_max = qp.get("height_max")
+        if height_min:
+            try:
+                queryset = queryset.filter(height__gte=int(height_min))
+            except (ValueError, TypeError):
+                pass
+        if height_max:
+            try:
+                queryset = queryset.filter(height__lte=int(height_max))
+            except (ValueError, TypeError):
+                pass
+
+        # — Weight Min/Max (weight is IntegerField, kg)
+        weight_min = qp.get("weight_min")
+        weight_max = qp.get("weight_max")
+        if weight_min:
+            try:
+                queryset = queryset.filter(weight__gte=int(weight_min))
+            except (ValueError, TypeError):
+                pass
+        if weight_max:
+            try:
+                queryset = queryset.filter(weight__lte=int(weight_max))
+            except (ValueError, TypeError):
+                pass
+
+        # — Joined After (date_joined is a DateTimeField)
+        #    Format expected: YYYY-MM-DD (e.g. joined_after=2024-01-01)
+        joined_after = qp.get("joined_after")
+        if joined_after:
+            try:
+                dt = datetime.strptime(joined_after, "%Y-%m-%d")
+                queryset = queryset.filter(date_joined__gte=dt)
+            except (ValueError, TypeError):
+                pass
+
+        # — Last Online Within N days (last_login is a DateTimeField)
+        last_online_days = qp.get("last_online_days")
+        if last_online_days:
+            try:
+                days = int(last_online_days)
+                cutoff = datetime.now() - timedelta(days=days)
+                queryset = queryset.filter(last_login__gte=cutoff)
+            except (ValueError, TypeError):
+                pass
+
+        # — Is Verified (“true” or “false” maps to verified_status == '1' or '0')
+        is_verified = qp.get("is_verified")
+        if is_verified:
+            val = is_verified.lower()
+            if val in ["true", "1"]:
+                queryset = queryset.filter(verified_status="1")
+            elif val in ["false", "0"]:
+                queryset = queryset.filter(verified_status="0")
+
+        # — Has Photo (“true” or “false”): profile_image is an ImageField
+        has_photo = qp.get("has_photo")
+        if has_photo:
+            val = has_photo.lower()
+            if val in ["true", "1"]:
+                queryset = queryset.exclude(profile_image__isnull=True)
+            elif val in ["false", "0"]:
+                # show users without a profile image
+                queryset = queryset.filter(profile_image__isnull=True)
+
+        # — Community ID (caste_id: Users.caste is FK to Caste)
+        community_id = qp.get("community_id")
+        if community_id:
+            try:
+                queryset = queryset.filter(caste_id=int(community_id))
+            except (ValueError, TypeError):
+                pass
+
+        # — Nationality ID (country_id: Users.country is FK to Country)
+        nationality_id = qp.get("nationality_id")
+        if nationality_id:
+            try:
+                queryset = queryset.filter(country_id=int(nationality_id))
+            except (ValueError, TypeError):
+                pass
+
+        # — Plan ID (user_plan_id: Users.user_plan is FK to Plan)
+        plan_id = qp.get("plan_id")
+        if plan_id:
+            try:
+                queryset = queryset.filter(user_plan_id=int(plan_id))
+            except (ValueError, TypeError):
+                pass
+
+        # — Religion ID (religion_id: Users.religion is FK to Religion)
+        religion_id = qp.get("religion_id")
+        if religion_id:
+            try:
+                queryset = queryset.filter(religion_id=int(religion_id))
+            except (ValueError, TypeError):
+                pass
+
+        # — Caste ID (another way to filter community; you can skip if using community_id)
+        caste_id = qp.get("caste_id")
+        if caste_id:
+            try:
+                queryset = queryset.filter(caste_id=int(caste_id))
+            except (ValueError, TypeError):
+                pass
+
+        # — Permanent State (permanent_district → District has state)
+        #    If you want to filter by state name or ID, you must JOIN District:
+        permanent_state = qp.get("permanent_state_id")
+        if permanent_state:
+            try:
+                queryset = queryset.filter(permanent_district__state_id=int(permanent_state))
+            except (ValueError, TypeError):
+                pass
+
+        # — Current State (district → District has state)
+        current_state = qp.get("current_state_id")
+        if current_state:
+            try:
+                queryset = queryset.filter(district__state_id=int(current_state))
+            except (ValueError, TypeError):
+                pass
+
+        # — Pincode (living_pin or pin)
+        pincode = qp.get("pincode")
+        if pincode:
+            queryset = queryset.filter(Q(living_pin=pincode) | Q(pin=pincode))
+
+        # 3) Paginate & Serialize (same as MyMatchesView)
+        paginator = PageNumberPagination()
+        paginator.page_size = 6
+        page = paginator.paginate_queryset(queryset.distinct(), request)
+        serializer = MatchedUserSerializerFull(page, many=True)   
+
+        return Response({
+            "status": "success",
+            "message": "Filtered matches fetched successfully.",
+            "data": serializer.data,
+            "count": paginator.page.paginator.count,
+            "next": paginator.get_next_link(),
+            "previous": paginator.get_previous_link(),
+        }, status=200)
+
+#near me search
+def haversine(lat1, lon1, lat2, lon2):
+    # convert decimal degrees to radians
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    # haversine formula
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371  # Radius of Earth in kilometers
+    return c * r
+
+class NearbyUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        current_user = request.user
+        radius_km = float(request.query_params.get("radius", 50))  # default 50km
+
+        if not current_user.lat or not current_user.lng:
+            return Response({"detail": "Current user's location not set."}, status=400)
+
+        nearby_users = []
+        for user in Users.objects.exclude(id=current_user.id).exclude(lat=None).exclude(lng=None):
+            distance = haversine(
+                current_user.lat, current_user.lng,
+                user.lat, user.lng
+            )
+            if distance <= radius_km:
+                nearby_users.append(user)
+
+        serializer = MatchedUserSerializerFull(nearby_users, many=True)
+        return Response({
+            
+            "status": "success",
+            "message":"near by matches",
+            "count": len(nearby_users),
+            "radius_km": radius_km,
+            "data": serializer.data
+        })
+
+class EngageScreenAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # --- Newly Joined ---
+        opposite_gender = 2 if user.gender == 1 else 1
+        new_profiles = Users.objects.filter(
+            gender=opposite_gender,
+            is_active=True
+        ).order_by('-created_at')[:10]
+
+        # --- Recommended ---
+        recommended_profiles = []  
+        try:
+            preference = getattr(user, 'partner_preference', None)
+            if preference:
+                age_min = preference.age_min
+                age_max = preference.age_max
+        except UserPartnerPreference.DoesNotExist:
+            recommended_profiles = Users.objects.none()
+        else:
+            recommended_profiles = Users.objects.filter(
+                gender=opposite_gender,
+                age__gte=user.age_min ,
+                age__lte=user.age_max,
+                is_active=True
+            )
+            if pref.religion:
+                recommended_profiles = recommended_profiles.filter(religion=pref.religion)
+            if pref.caste:
+                recommended_profiles = recommended_profiles.filter(caste=pref.caste)
+            if pref.location:
+                recommended_profiles = recommended_profiles.filter(location=pref.location)
+            recommended_profiles = recommended_profiles.exclude(id=user.id)[:10]
+        finally:
+            return Response({
+                "newly_joined": MatchedUserSerializerFull(new_profiles, many=True).data,
+                "recommended": MatchedUserSerializerFull(recommended_profiles, many=True).data
+            })
