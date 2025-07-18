@@ -1,0 +1,190 @@
+
+from django.utils import timezone
+from rest_framework import serializers
+from .models import SuccessStory, SuccessStoryImage,Blog, BlogLikeDislikeLog, BlogComment, BlogSaved
+from users.models import Users
+from utils.helpers import Utils as CommonUtils
+
+class SuccessStoryImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SuccessStoryImage
+        fields = ['success_story', 'image']
+
+class PublicUserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = ['id', 'first_name', 'last_name', 'profile_image']  
+
+
+class ForyouSuccessStorySerializer(serializers.ModelSerializer):
+    user = PublicUserProfileSerializer(read_only=True)
+    partner = PublicUserProfileSerializer(read_only=True)
+    images = SuccessStoryImageSerializer(many=True, read_only=True)
+    share_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SuccessStory
+        fields = [
+            'id',
+            'title',
+            'head',
+            'body',
+            'date_of_marriage',
+            'user',
+            'partner',
+            'images',
+            'share_url',
+            'created_at',
+        ]
+    
+    def get_share_url(self, obj):
+        request = self.context.get('request')
+        if obj.status == SuccessStory.StatusChoices.ACTIVE and obj.share_token:
+            return request.build_absolute_uri(f"share/{obj.share_token}/")
+        return None
+    
+
+class SuccessStoryCreateSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = SuccessStory
+        fields = ['user','partner', 'title', 'head', 'body', 'date_of_marriage', 'status']
+
+    def validate(self, attrs):
+        request_user = self.context['request'].user
+        if request_user == attrs['partner']:
+            raise serializers.ValidationError("User and Partner cannot be the same person.")
+        attrs["user"] = self.context.get("request").user.id
+        return attrs
+
+
+class AddBlogCommentSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.first_name', read_only=True)
+
+    class Meta:
+        model = BlogComment
+        fields = ['blog', 'user', 'message']
+    
+    def validate_message(self,value):
+        if not value:
+            raise serializers.ValidationError("Please enter a valid comment")
+
+class BlogCommentSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.first_name', read_only=True)
+
+    class Meta:
+        model = BlogComment
+        fields = ['blog', 'user', 'user_name', 'message', 'created_at']
+
+
+class BlogSerializer(serializers.ModelSerializer):
+    blog_written_by_name = serializers.CharField(source='blog_written_by.first_name', read_only=True)
+    total_likes = serializers.SerializerMethodField()
+    total_dislikes = serializers.SerializerMethodField()
+    total_comments = serializers.IntegerField(read_only=True)
+    is_saved = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Blog
+        fields = [
+            'id', 'head', 'body', 'image', 'blog_written_by', 'blog_written_by_name',
+            'total_likes', 'total_dislikes', 'total_comments', 'is_saved',
+            'created_at', 'updated_at'
+        ]
+
+    def get_total_likes(self, obj):
+        return obj.like_dislike_logs.filter(reaction_type=BlogLikeDislikeLog.LIKE).count()
+
+    def get_total_dislikes(self, obj):
+        return obj.like_dislike_logs.filter(reaction_type=BlogLikeDislikeLog.DISLIKE).count()
+
+    def get_is_saved(self, obj):
+        user = self.context.get('request').user
+        if user and user.is_authenticated:
+            return obj.saved_by_users.filter(user=user).exists()
+        return False
+
+
+class BlogLikeDislikeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BlogLikeDislikeLog
+        fields = ['id', 'blog', 'user', 'reaction_type', 'created_at']
+
+
+class BlogSaveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BlogSaved
+        fields = ['blog', 'user']
+    
+
+class SuccessStorySaveImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SuccessStoryImage
+        fields = ['success_story','image']
+
+
+class BlogListSerializer(serializers.ModelSerializer):
+  
+    image = serializers.SerializerMethodField()
+    blog_written_by_name = serializers.CharField(source='blog_written_by.first_name')
+    total_likes = serializers.IntegerField(source='like_count')
+    total_dislikes = serializers.IntegerField(source='dislike_count')
+    total_comments = serializers.IntegerField(read_only=True)
+    time = serializers.SerializerMethodField()
+    blog_written_by_image = serializers.SerializerMethodField()
+    class Meta:
+        model = Blog
+        fields = [
+            'id', 'head', 'body', 'image','blog_written_by_name','time',
+            'total_likes', 'total_dislikes', 'total_comments',
+            'created_at', 'updated_at' ,'blog_written_by_image'
+        ]
+
+    def get_image(self,obj):
+        request = self.context.get("request")
+        logo = obj.image
+        if logo and hasattr(logo, 'url'):
+            return request.build_absolute_uri(logo.url)
+        return None
+    
+    def get_blog_written_by_image(self, obj):
+        request = self.context.get("request")
+        if obj.blog_written_by and hasattr(obj.blog_written_by, 'profile_image'):
+            logo = obj.blog_written_by.profile_image
+            if logo and hasattr(logo, 'url'):
+                return request.build_absolute_uri(logo.url)
+        return None
+    
+    def get_time(self, obj):
+        
+        now = timezone.now()
+        diff = now - obj.created_at
+
+        if diff.days > 0:
+            if diff.days == 1:
+                return "1 day ago"
+            return f"{diff.days} days ago"
+        elif diff.seconds >= 3600:
+            hours = diff.seconds // 3600
+            if hours == 1:
+                return "1 hr ago"
+            return f"{hours} hrs ago"
+        elif diff.seconds >= 60:
+            minutes = diff.seconds // 60
+            if minutes == 1:
+                return "1 min ago"
+            return f"{minutes} min ago"
+        else:
+            return "just now"
+
+    def get_total_likes(self, obj):
+        return obj.like_dislike_logs.filter(reaction_type=BlogLikeDislikeLog.LIKE).count()
+
+    def get_total_dislikes(self, obj):
+        return obj.like_dislike_logs.filter(reaction_type=BlogLikeDislikeLog.DISLIKE).count()
+
+    def get_is_saved(self, obj):
+        user = self.context.get('request').user
+        if user and user.is_authenticated:
+            return obj.saved_by_users.filter(user=user).exists()
+        return False
