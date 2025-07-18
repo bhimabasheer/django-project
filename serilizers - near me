@@ -7,6 +7,9 @@ from users.utils import calculate_profile_completion
 from user_preference.models import UserPartnerPreference
 from datetime import date
 
+#path('engage/filter-matches/', FilterMatchesView.as_view(), name='filter-matches'),
+#path('engage/filter-matches-nearme/', NearbyUsersView.as_view(), name='filter-matches-nearme'),
+#path('engage/newly-joined-users/', EngageScreenAPIView.as_view(), name='newly-joined-users'),
 
 
 #Add new imports for onboarding serializers
