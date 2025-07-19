@@ -1,0 +1,75 @@
+class CreatePaymentView(APIView):
+    def post(self, request):
+        cart_id = "cart_11111"
+        amount = 0.01
+ 
+        customer = {
+            "name": "first-name last-name",
+            "email": "name1@email.com",
+            "phone": "05xxxxxxxx",
+            "street1": "address street",
+            "city": "riyadh",
+            "state": "riyadh",
+            "country": "SA",
+            "zip": "12345"
+        }
+ 
+        shipping = {
+            "name": "name1 last1",
+            "email": "email12@domain.com",
+            "phone": "05xxxxxxxx",
+            "street1": "street2",
+            "city": "riyadh",
+            "state": "riyadh",
+            "country": "SA",
+            "zip": "54321"
+        }
+ 
+        response_data = create_clickpay_invoice(cart_id, amount, customer, shipping)
+ 
+        if "redirect_url" in response_data:
+            payment_url = response_data["redirect_url"]
+            print(payment_url)
+            webbrowser.open(payment_url)
+        else:
+            return Response({"error": response_data}, status=status.HTTP_400_BAD_REQUEST)
+       
+class ClickPayCallbackView(APIView):
+    def post(self, request):
+        data = request.data
+        print("Callback received:", data)
+        return Response({"message": "Callback received"}, status=200)
+ 
+import requests
+from django.conf import settings
+ 
+def create_clickpay_invoice(cart_id, amount, customer, shipping):
+    url = "https://secure.clickpay.com.sa/payment/request"
+    headers = {
+        "authorization": settings.CLICKPAY_AUTH_KEY,
+        "Content-Type": "application/json"
+    }
+ 
+    data = {
+        "profile_id": int(settings.CLICKPAY_PROFILE_ID),
+        "tran_type": "sale",
+        "tran_class": "ecom",
+        "cart_id": cart_id,
+        "cart_amount": float(amount),
+        "cart_currency": "SAR",
+        "cart_description": "Description of the items/services",
+        "paypage_lang": "en",
+        "customer_details": customer,
+        "shipping_details": shipping,
+        "callback": settings.CLICKPAY_CALLBACK_URL,
+        "return": settings.CLICKPAY_RETURN_URL,
+        "user_defined": {
+            "udf3": "UDF3 Test3",
+            "udf9": "UDF9 Test9"
+        }
+    }
+ 
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
+ 
+ 
