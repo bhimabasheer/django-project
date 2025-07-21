@@ -1,0 +1,52 @@
+class UserEngageListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        engage_type = request.GET.get("type")  
+        key = request.GET.get("key")  # '1' for sent, else received
+        if engage_type == "visit":
+            ModelClass = Activity
+        elif engage_type == "interest":
+            ModelClass = ExpressInterest
+        elif engage_type == "favorite":
+            ModelClass = Favorite
+        elif engage_type == "image request":
+            ModelClass = AlbumRequest
+        elif engage_type == "contact request":
+            ModelClass = ContactRequest    
+        else:
+            return Response({"error": "Invalid type"}, status=400)
+
+        if key == "1":
+            if engage_type == "visit":
+                 interests = ModelClass.objects.filter(uid=request.user.aec_id,op="view_profile")
+            else :  
+                 interests = ModelClass.objects.filter(from_user_id=request.user.id).select_related('to_user')
+            users = [i.to_user for i in interests]
+        else:
+            if engage_type == "visit":
+                 interests = ModelClass.objects.filter(to=request.user.aec_id,op="view_profile")
+            else : 
+                interests = ModelClass.objects.filter(to_user_id=request.user.id).select_related('from_user')
+            users = [i.from_user for i in interests]
+
+        # Convert list of users to a queryset
+        user_ids = [user.id for user in users]
+        queryset = Users.objects.filter(id__in=user_ids)
+
+       # Apply filters (height min/max etc.)
+        filtered_queryset = UserFilterService(queryset, request.GET).filter()
+
+        # Paginate the results
+        paginator = PageNumberPagination()
+        paginator.page_size = 10
+        result_page = paginator.paginate_queryset(filtered_queryset, request)
+
+        # Serialize the paginated data
+        serializer = UserEngageSerializer(result_page, many=True)
+        response_data=paginator.get_paginated_response(serializer.data).data
+        # Return the success response
+        return Response(
+                success_(response=response_data),
+                status=status.HTTP_200_OK
+                )
