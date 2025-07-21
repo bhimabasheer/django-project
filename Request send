@@ -1,0 +1,25 @@
+class SendInterestRequest(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            from_user_id = request.user.id
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id,to_user_id=request.user.id).first()
+            if interest:
+                return Response(error_(message=const.REQUEST_EXISTED),status=status.HTTP_200_OK)
+            else:
+                ExpressInterest.objects.create(
+                    from_user_id=request.user.id,
+                    to_user_id= request.data.get('id'),
+                    status=StatusChoices.REQUEST_SENT,             
+                    created_at=timezone.now(),
+                    updated_at=timezone.now(),
+                )
+                return Response(
+                success_(response={}, message=const.REQUEST_SENT),
+                status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR)) 
