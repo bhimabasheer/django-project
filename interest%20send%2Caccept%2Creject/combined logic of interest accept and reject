@@ -1,0 +1,35 @@
+class HandleInterestRequest(APIView):    
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            action = request.data.get('action')  # 2 = Accept, 3 = Decline
+            from_user_id = request.user.id
+            
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING), status=200)
+
+            action_map = {
+                const.REQUEST_ACCEPTED_ID: (StatusChoices.ACCEPTED, const.REQUEST_ACCEPTED),
+                const.REQUEST_DECLINED_ID: (StatusChoices.DECLINED, const.REQUEST_REJECTED),
+            }
+
+            if action not in action_map:
+                return Response(error_(message=const.ACTION_NEEDED), status=status.HTTP_400_BAD_REQUEST)
+
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id, to_user_id=to_user_id).first()
+            
+            if not interest:
+                return Response(error_(message=const.REQUEST_NOT_FOUND), status=status.HTTP_200_OK)
+
+            interest.status, message = action_map[action]
+            interest.save()
+
+            return Response(
+                success_(response={}, message=message),
+                status=status.HTTP_200_OK
+            )
+                
+        except Exception as e:
+            return Response(error_(message=f"{e}"), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
