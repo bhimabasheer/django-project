@@ -1,0 +1,78 @@
+# Test email sending
+@require_GET
+def send_test_email(request):
+    try:
+        send_mail(
+            subject='Test Email from Click & Marry',
+            message='This is a test email sent from your Django backend.',
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=['beemabasheer79@gmail.com'],  # change this to your test recipient
+            fail_silently=False,
+        )
+        return JsonResponse({'message': 'Test email sent successfully!'})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+''''
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def resend_email_otp(request):
+    user = request.user
+
+    if user.email_verified:
+        return Response({
+            "status": "Success",
+            "message": "Email already verified."
+        }, status=status.HTTP_200_OK)
+
+    # Generate and send new OTP
+    otp = str(random.randint(100000, 999999))
+    user.email_verification_code = otp
+    user.save()
+
+    try:
+        send_mail(
+            subject='Resend Verification Code',
+            message=f'Your verification code is: {otp}',
+            from_email='noreply@clickandmarry.com',
+            recipient_list=[user.email],
+            fail_silently=False,
+        )
+    except Exception:
+        return Response({
+            "status": "Error",
+            "message": "Failed to send email."
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    return Response({
+        "status": "Success",
+        "message": "Verification code sent successfully."
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def verify_email_otp(request):
+    user = request.user
+    serializer = VerifyEmailOTPSerializer(data=request.data)
+
+    if serializer.is_valid():
+        otp = serializer.validated_data.get('otp')
+
+        if user.email_verification_code == otp:
+            user.email_verified = True
+            user.email_verification_code = None  # Clear OTP after success
+            user.save()
+
+            return Response({
+                "status": "Success",
+                "message": "Email verified successfully."
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                "status": "Error",
+                "message": "Invalid verification code."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+'''
