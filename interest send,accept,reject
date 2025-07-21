@@ -1,0 +1,231 @@
+from django.shortcuts import render
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
+from .models import ExpressInterest, Favorite ,AlbumRequest,ContactRequest
+from .serializers import UserEngageSerializer
+from utils.api_response import error_, success_, success_response
+from users.services.EngageFilterService import UserFilterService  
+from users.models import Users
+from common.models import Activity
+from .models import AlbumRequest,NotInterested
+from django.utils import timezone
+from .models import StatusChoices
+from common.models import NotificationHistory,NotificationType
+from utils.api_response import error_response,success_response
+from rest_framework import status
+from click_for_marry import constants as const
+
+
+
+class UserEngageListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        engage_type = request.GET.get("type")  
+        key = request.GET.get("key")  # '1' for sent, else received
+        if engage_type == "visit":
+            ModelClass = Activity
+        elif engage_type == "interest":
+            ModelClass = ExpressInterest
+        elif engage_type == "favorite":
+            ModelClass = Favorite
+        elif engage_type == "image request":
+            ModelClass = AlbumRequest
+        elif engage_type == "contact request":
+            ModelClass = ContactRequest    
+        else:
+            return Response({"error": "Invalid type"}, status=400)
+
+        if key == "1":
+            if engage_type == "visit":
+                 interests = ModelClass.objects.filter(uid=request.user.aec_id,op="view_profile")
+            else :  
+                 interests = ModelClass.objects.filter(from_user_id=request.user.id).select_related('to_user')
+            users = [i.to_user for i in interests]
+        else:
+            if engage_type == "visit":
+                 interests = ModelClass.objects.filter(to=request.user.aec_id,op="view_profile")
+            else : 
+                interests = ModelClass.objects.filter(to_user_id=request.user.id).select_related('from_user')
+            users = [i.from_user for i in interests]
+
+        # Convert list of users to a queryset
+        user_ids = [user.id for user in users]
+        queryset = Users.objects.filter(id__in=user_ids)
+
+       # Apply filters (height min/max etc.)
+        filtered_queryset = UserFilterService(queryset, request.GET).filter()
+
+        # Paginate the results
+        paginator = PageNumberPagination()
+        paginator.page_size = 10
+        result_page = paginator.paginate_queryset(filtered_queryset, request)
+
+        # Serialize the paginated data
+        serializer = UserEngageSerializer(result_page, many=True)
+
+        # Return the success response
+        return success_response(paginator.get_paginated_response(serializer.data).data)
+
+class RequestAlbumView(APIView):    
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:        
+            if AlbumRequest.objects.filter(from_user_id=request.user.id, to_user_id=request.data.get('id')).exists():
+                return Response(error_(message=const.REQUEST_EXISTED),status=200)
+            AlbumRequest.objects.create(
+                from_user_id=request.user.id,
+                to_user_id=request.data.get('id'),
+                status=StatusChoices.REQUEST_SENT,
+                created_at=timezone.now(),
+                updated_at=timezone.now(),
+            )
+            return Response(
+                success_(response={}, message=const.REQUEST_SENT),
+                status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))
+        
+class AcceptInterestRequest(APIView):    
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id =request.data.get('id')
+            from_user_id = request.user.id
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id,to_user_id=to_user_id).first()
+            if interest:
+                interest.status = StatusChoices.ACCEPTED
+                interest.save() 
+                return Response(
+                success_(response={}, message=const.REQUEST_ACCEPTED),
+                status=status.HTTP_200_OK
+                )
+            else:
+                return Response(error_(message=const.REQUEST_NOT_FOUND),status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))  
+        
+class RejectInterestRequest(APIView):    
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            from_user_id = request.user.id
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id,to_user_id=to_user_id).first()
+            if interest:
+                interest.status = StatusChoices.DECLINED
+                interest.save()
+                return Response(
+                success_(response={}, message=const.REQUEST_REJECTED),
+                status=status.HTTP_200_OK
+                )
+            else:
+                return Response(error_(message=const.REQUEST_NOT_FOUND),status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR)) 
+
+class MarkNoInterest(APIView):    
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            from_user_id = request.user.id
+
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+
+            interest = NotInterested.objects.filter(from_user_id=from_user_id,to_user_id=request.user.id).first()
+            if interest: 
+                return Response(error_(message=const.ALREADY_NOT_INTERESTED),status=200)
+            else:
+                NotInterested.objects.create(
+                    from_user_id= request.user.id,
+                    to_user_id= request.data.get('id'),             
+                    created_at=timezone.now(),
+                    updated_at=timezone.now(),
+                )
+                return Response(
+                success_(response={}, message=const.NOT_INTERESTED),
+                status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))                
+        
+class SendInterestRequest(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            from_user_id = request.user.id
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id,to_user_id=request.user.id).first()
+            if interest:
+                return Response(error_(message=const.REQUEST_EXISTED),status=status.HTTP_200_OK)
+            else:
+                ExpressInterest.objects.create(
+                    from_user_id=request.user.id,
+                    to_user_id= request.data.get('id'),
+                    status=StatusChoices.REQUEST_SENT,             
+                    created_at=timezone.now(),
+                    updated_at=timezone.now(),
+                )
+                return Response(
+                success_(response={}, message=const.REQUEST_SENT),
+                status=status.HTTP_200_OK
+                )
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))    
+
+class CancelInterestRequest(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+            from_user_id = request.user.id
+          
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+            interest = ExpressInterest.objects.filter(from_user_id=from_user_id,to_user_id=request.user.id).first()
+            if interest:
+                interest.status = StatusChoices.CANCELLED
+                interest.save()
+                return Response(
+                success_(response={}, message=const.REQUEST_CANCELLED),
+                status=status.HTTP_200_OK
+                )  
+            else:
+                return Response(error_(message=const.REQUEST_NOT_FOUND),status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))   
+
+class MessageRequest(APIView):  
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        try:
+            to_user_id = request.data.get('id')
+          
+            if not to_user_id:
+                return Response(error_(message=const.REQUEST_ID_MISSING),status=200)
+            NotificationHistory.objects.create(
+                    user_id=to_user_id,
+                    notification_type=NotificationType.MESSAGE , 
+                    message = f"You have a new request from {request.user.aec_id}" ,      
+                    created_at=timezone.now(),
+                    updated_at=timezone.now(),
+                )
+            return Response(
+                success_(response={}, message=const.SEND_MSG_REQUEST),
+                status=status.HTTP_200_OK
+                ) 
+        except Exception as e:
+            return Response(error_(message=f"{e}",status=status.HTTP_500_INTERNAL_SERVER_ERROR))               
