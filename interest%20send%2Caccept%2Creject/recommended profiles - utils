@@ -1,0 +1,28 @@
+@staticmethod
+    def get_admin_recommended_query(request):
+        user = request.user
+        latest_activities = Activity.objects.filter(to=OuterRef('pk')).order_by('-created_at')
+        feet,remaining_inches = Utils.height_to_inches()
+        targeted_activities = Prefetch('targeted_activities', queryset=Activity.objects.filter(op=const.PROFILE_VIEWED, user=user))
+        interests_received = Prefetch('interests_received', queryset=ExpressInterest.objects.filter(from_user=user))
+        not_interested_given = Prefetch('not_interested_given', queryset=NotInterested.objects.filter(from_user=user))
+        user_data = Users.objects.\
+                    prefetch_related('user_plans','albums','admin_recommented_to',\
+                    targeted_activities,interests_received, not_interested_given).\
+                    filter(admin_recommented_to__user=user) .\
+                    exclude(gender=request.user.gender) .\
+                    exclude(interests_received__from_user=user,\
+                    not_interested_given__from_user=user).annotate(image_count=Count('albums',\
+                    filter=Q(albums__is_deleted=False)),full_name=Concat(F('first_name'),Value(' '),F('last_name'),
+                    output_field=CharField()),age_str=Concat(F('age'),Value('yrs'),
+                    output_field=CharField()),last_activity=Subquery(latest_activities.\
+                    values('created_at')[:1]),height_formatted=Concat(
+                    Cast(feet, CharField()), Value("'"),
+                    Cast(Round(remaining_inches), CharField()), Value('"')
+                    )).select_related('religion','country',
+                    'qualification','occupation','annual_income','diet','sub_religion',
+                    'country','city','place','body_type','marital_status','country_living',\
+                    'living_city','language','profile_created_by')
+       
+        user_data = Utils.get_verification_and_album_query(user_data=user_data,user=user)
+        return user_data
