@@ -1,0 +1,46 @@
+
+
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from users.utils import Utils as UsersUtils
+from click_for_marry import constants as const
+from utils.helpers import Utils as CommonUtils
+from users.serializers import MatchedUserSerializer
+from utils.api_response import error_, success_
+from rest_framework import status
+from rest_framework.views import APIView
+class AdminRecommendedProfiles(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            user = request.user
+            page = request.GET.get('page', const.PAGE)
+            limit = request.GET.get('limit', const.LIMIT)
+            filter_data = request.GET.get('filter_data', None)
+            count = 0
+            data = []
+            # Start with all users except the current one
+            users_data = UsersUtils.get_admin_recommended_query(request=request) 
+            
+            if filter_data:
+                users_data = users_data.filter(UsersUtils.generate_user_filter_query(filter_data))
+
+            if users_data.exists():
+                count = users_data.count()
+
+                pagination = CommonUtils.pagination(queryset=users_data, page=page, limit=limit)
+
+                data = pagination["queryset"]
+                serializer = MatchedUserSerializer(data, many=True,context={"request" : request})
+                data = serializer.data
+
+            pagination_details = {
+                "page" : page,
+                "limit": limit,
+                "count": count
+            }
+            response_data = {"users_data" : data,"pagination_details": pagination_details}
+            return Response(success_(response=response_data), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
