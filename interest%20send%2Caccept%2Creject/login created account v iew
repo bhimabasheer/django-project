@@ -1,0 +1,481 @@
+from rest_framework import status
+from rest_framework.views import APIView
+from datetime import datetime, timezone as dt_timezone
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken,TokenError
+import jwt
+from django.utils import timezone
+from datetime import timedelta
+from rest_framework import status
+from django.db.models import Q
+from .models import OTP
+from users.models import Users, Session
+from common.models import Activity
+from .serializers import (PreRegisterSerializer, CreateAccountWithOTPSerializer,
+ProfileCreatedForSerializer, CustomTokenObtainPairSerializer, CustomTokenObtainSerializer,
+OTPForLoginSerializer, VerifyLoginOTPSerializer,WebPreRegisterSerializer,WebVerifyOTPSerializer,
+WebCreateAccountSerializer)
+import uuid
+from rest_framework import serializers
+from django.conf import settings
+from utils.api_response import success_,error_
+from click_for_marry import constants as const
+from utils.helpers import Utils
+from .utils import Utils as AccountUtils
+import json
+
+class CreateAccountAPIView(APIView):
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            request_data = request.data
+            serializer = PreRegisterSerializer(data=request_data)
+            serializer.is_valid()
+            if not serializer.is_valid():
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+            
+            data = serializer.validated_data
+            
+            code = serializer.create_otp(data)
+            response = {"otp": code}
+            message = f"OTP sent to {data.get('email', data.get('phone'))}"
+            return Response(success_(message=message, response=response),status=status.HTTP_200_OK)
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
+
+class CreateAccountWithOTPAPIView(APIView):
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        serializer = CreateAccountWithOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            # Extract the first error message from serializer
+            error_message = "Validation error"
+            if serializer.errors:
+                # Get the first error from the first field
+                first_field_errors = next(iter(serializer.errors.values()))
+                if isinstance(first_field_errors, list):
+                    error_message = first_field_errors[0]
+                else:
+                    error_message = str(first_field_errors)
+
+            return Response(error_(message=error_message, response=serializer.errors),
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Create user and generate tokens
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+            
+            user_data = {
+                "id": user.id,
+                "aec_id": user.aec_id,
+                "refer_code":user.refer_code,
+                "email": user.email,
+                "phone": user.phone,
+                "username": user.username,
+                "phone_status": user.phone_status
+            }
+            
+            response_data = {
+                    "user": user_data,
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                    "identifier_type": "email" if '@' in serializer.validated_data['identifier'] else "phone"
+                }
+            return Response(success_(response=response_data, message="Account created successfully"),
+                        status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e), response={}),
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+          
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+    
+class CustomLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def get_expiry_seconds(self, token_payload):
+        now = datetime.now(dt_timezone.utc)
+        exp_dt = datetime.fromtimestamp(token_payload['exp'], tz=dt_timezone.utc)
+        return max(0, int((exp_dt - now).total_seconds()))
+
+    def post(self, request):
+        device_id = Utils.get_device_id(request)
+        serializer = CustomTokenObtainSerializer(data=request.data)
+        if not serializer.is_valid():
+            error = serializer.errors
+            errors = json.loads(json.dumps(error))
+
+                # combine errors to form a single word
+            errors_data = Utils.extract_validation_error(errors)
+            return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+        
+        data = serializer.validated_data
+        user = data['user']
+        Session.objects.update_or_create(
+                user=user,
+                session_id=str(uuid.uuid4()),
+                device_type=request.data.get('device_type', 1),
+                device_id=device_id,
+                last_login=timezone.now()
+            )
+
+        Activity.objects.create(
+            user=user,
+            op="User logged in",
+            ip_address=Utils.get_client_ip(request),
+            device_id=device_id
+        )
+
+        access_payload = jwt.decode(data['access'], options={"verify_signature": False})
+        refresh_payload = jwt.decode(data['refresh'], options={"verify_signature": False})
+
+        response_data= {
+            "access": data["access"],
+            "refresh": data["refresh"],
+            "user": Utils.get_user_data(user),
+            "device_id": device_id,
+            "access_expires": access_payload['exp'],
+            "refresh_expires": refresh_payload['exp'],
+            "expires_in": {
+                "access": self.get_expiry_seconds(access_payload),
+                "refresh": self.get_expiry_seconds(refresh_payload)
+            },
+            **AccountUtils.get_common_login_response(user=user)
+        }
+
+        return Response(success_(message=const.LOGIN_SUCCESS,response=response_data,),
+                        status=status.HTTP_200_OK)
+
+class LogoutAPIView(APIView):
+    def post(self, request):
+        try:
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return Response(error_(message="Refresh token is required"),
+                            status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                token = RefreshToken(refresh_token)
+                if token.payload.get('user_id') != request.user.id:
+                    raise ValueError("Token doesn't belong to user")
+                token.blacklist()
+            except Exception as token_error:
+                return Response(error_(message="Invalid token", response=str(token_error)),
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+            # Device-specific logout
+            device_id = request.data.get("device_id") or Utils.get_device_id(request)
+            sessions_terminated = Session.objects.filter(
+                user=request.user, 
+                device_id=device_id
+            ).delete()[0]
+
+            Activity.objects.create(
+                user=request.user,
+                op="User logged out",
+                ip_address=Utils.get_client_ip(request),
+                device_id=device_id
+            )
+           
+            response_data = {
+                "sessions_terminated": sessions_terminated,
+                "device_id": device_id,
+                "logout_time": timezone.now()
+            }
+            return Response(success_(response=response_data, message="Successfully logged out"),
+                        status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message="Logout failed", response=str(e)),
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+class TokenRefreshView(APIView):
+    permission_classes = [AllowAny]  
+
+    def get_expiry_seconds(self, exp_timestamp):
+        
+        now = datetime.now(dt_timezone.utc)
+        exp_dt = datetime.fromtimestamp(exp_timestamp, tz=dt_timezone.utc)
+        return max(0, int((exp_dt - now).total_seconds()))
+
+    def post(self, request):
+        refresh_token = request.data.get("refresh")
+        device_id = Utils.get_client_ip(request),
+        
+        if not refresh_token:
+            return Response(error_(message="Refresh token is required"),
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            user_id = refresh.payload.get('user_id')
+            
+            try:
+                user = Users.objects.get(id=user_id)
+            except Users.DoesNotExist:
+                return Response(error_(message="User not found"),
+                            status=status.HTTP_401_UNAUTHORIZED)
+
+            # Implement token rotation
+            refresh.blacklist()
+            
+            # Create new tokens
+            new_refresh = RefreshToken.for_user(user)
+            new_access = str(new_refresh.access_token)
+
+            # Log the refresh activity
+            Activity.objects.create(
+                user=user,
+                op="Token refreshed",
+                ip_address=Utils.get_client_ip(request),
+                device_id=device_id
+            )
+            
+            # Prepare response data
+            response_data = {
+                "access": new_access,
+                "refresh": str(new_refresh),
+                "user": Utils.get_user_data(user),
+                "device_id": device_id,
+                "access_expires": new_refresh.access_token.payload['exp'],
+                "refresh_expires": new_refresh.payload['exp'],
+                "expires_in": {
+                    "access": self.get_expiry_seconds(new_refresh.access_token.payload['exp']),
+                    "refresh": self.get_expiry_seconds(new_refresh.payload['exp'])
+                }
+            }
+            
+            return Response(success_(response=response_data, message="Token refreshed successfully"),
+                          status=status.HTTP_200_OK)
+
+        except Exception as e:
+            error_msg = "Invalid token"
+            if isinstance(e, TokenError):
+                error_msg = str(e)
+                
+            # Log the failed attempt without additional_data if your model doesn't support it
+            activity_data = {
+                'op': f"Token refresh failed: {error_msg}",
+                'ip_address': Utils.get_client_ip(request),
+                'device_id': device_id
+            }
+            # If you have a user (we might not in error cases)
+            if 'user_id' in locals():
+                activity_data['user'] = user
+            
+            Activity.objects.create(**activity_data)
+            
+            return Response(error_(message=error_msg, response={"error": str(e)}),
+                          status=status.HTTP_401_UNAUTHORIZED)
+
+
+class ProtectedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        
+        response_data = {
+                    "username": request.user.username,
+                    "email": request.user.email,
+                    "id": request.user.id,
+                    "aec_id": request.user.aec_id
+                }
+        
+        return Response(success_(response=response_data, message="Authenticated successfully"),
+                          status=status.HTTP_200_OK)
+    
+class OTPForLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = OTPForLoginSerializer(data=request.data)
+        if serializer.is_valid():
+            phone = serializer.validated_data['phone']
+            temp_token = serializer.create_otp(phone)  
+            return Response(success_(response=temp_token, message="OTP sent successfully"),
+                          status=status.HTTP_200_OK)
+        return Response(error_(message="OTP request failed", response=serializer.errors),
+                          status=status.HTTP_400_BAD_REQUEST)
+                          
+class VerifyLoginOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VerifyLoginOTPSerializer(data=request.data)
+        if serializer.is_valid():
+            data = serializer.validated_data
+            user = data["user"]
+
+            response_data = {
+                "access": data["access"],
+                "refresh": data["refresh"],
+                "user":Utils.get_user_data(user),
+                **AccountUtils.get_common_login_response(user=user)
+                }
+            return Response(success_(response=response_data, message="OTP verified"),
+                          status=status.HTTP_200_OK)
+        return Response(error_(message="OTP verification failed", response=serializer.errors),
+                          status=status.HTTP_400_BAD_REQUEST)
+    
+class SaveProfileCreatedForView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        try:
+            print(request.user.id)
+            serializer = ProfileCreatedForSerializer(
+                request.user,data=AccountUtils.get_profile_created_for_payload(request=request)
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                
+                return Response(success_(response={}, message="Profile details updated successfully"),
+                            status=status.HTTP_200_OK)
+            else:
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
+       
+       
+# web app 
+#Submit Profile + Name + Identifier → Send OTP
+
+class WebPreRegisterAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            serializer = WebPreRegisterSerializer(data=request.data)
+            if not serializer.is_valid():
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+            
+            validate_data = serializer.validated_data
+            
+            # Create and send OTP
+            otp = serializer.create_otp(validate_data)
+            identifier = validate_data.get('email') if validate_data.get('email') else validate_data.get('phone')
+            print(f"OTP for {validate_data.get('email'), validate_data.get('phone')}: {otp}")
+            message=f"OTP sent to {identifier}"
+            
+            response_data = {"otp": otp}
+            return Response(success_(message=message,response=response_data),
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return Response(error_(message=str(e)),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+#Verify OTP → Return Success (No Account Yet)
+class WebVerifyOTPAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            request_data = request.data
+            identifier = request_data.get("identifier",None)
+            otp = request_data.get("otp",None)
+            if not identifier or not otp:
+                return Response(error_(message="Please provide a valid payload"),status=status.HTTP_200_OK )
+            serializer = WebVerifyOTPSerializer(data=request_data)
+
+            if not serializer.is_valid():
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+            
+            data = serializer.validated_data
+            
+            token_data = data.get("token_data", {})
+            return Response(success_(response=token_data),
+                            status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
+        
+
+#Create Account (After Password Setup)
+class WebCreateAccountAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def get_expiry_seconds(self, token_payload):
+        now = datetime.now(dt_timezone.utc)
+        exp_dt = datetime.fromtimestamp(token_payload['exp'], tz=dt_timezone.utc)
+        return max(0, int((exp_dt - now).total_seconds()))
+    
+    def post(self, request):
+        try:
+            password = request.data.get("password", None)
+
+            serializer = WebCreateAccountSerializer(data=request.data)
+            
+            if not serializer.is_valid():
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+            
+            data = serializer.validated_data
+
+            user = serializer.set_password(data,password)
+            refresh = RefreshToken.for_user(user)
+
+            access_payload = jwt.decode(str(refresh.access_token), options={"verify_signature": False})
+            refresh_payload = jwt.decode(str(refresh), options={"verify_signature": False})
+            response_data= {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": Utils.get_user_data(user),
+                "device_id": Utils.get_device_id(request),
+                "access_expires": access_payload['exp'],
+                "refresh_expires": refresh_payload['exp'],
+                "expires_in": {
+                    "access": self.get_expiry_seconds(access_payload),
+                    "refresh": self.get_expiry_seconds(refresh_payload)
+                },
+                **AccountUtils.get_common_login_response(user=user)            }
+            message = "Account created successfully!"
+            return Response(success_(response=response_data,message=message),
+                status=status.HTTP_200_OK
+            )
+            
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
