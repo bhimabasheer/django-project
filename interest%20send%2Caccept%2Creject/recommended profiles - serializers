@@ -1,0 +1,64 @@
+
+from users import serializers
+from users.models import Users
+
+
+class MatchedUserSerializer(serializers.ModelSerializer):
+    profile_image = serializers.SerializerMethodField()
+    age = serializers.CharField(source='age_str')
+    height = serializers.CharField(source='height_formatted')
+    religion = serializers.SerializerMethodField()
+    community = serializers.SerializerMethodField()
+    district = serializers.SerializerMethodField()
+    place = serializers.SerializerMethodField()
+    occupation = serializers.SerializerMethodField()
+    is_premium_member = serializers.SerializerMethodField()
+    verification_type = serializers.IntegerField()
+    allow_image_view = serializers.BooleanField(source='has_approved_album_request')
+    
+    class Meta:
+        model = Users
+        fields = ['id', 'first_name', 'last_name', 'occupation','profile_image', 'age', 'height', \
+                  'religion','community','district','place','verification_type','is_premium_member','allow_image_view']
+    
+    def get_place(self,obj):
+        place_name = ""
+        if obj.place:
+            place_name = obj.place.name
+        return place_name
+    
+    def get_district(self,obj):
+        city_name = ""
+        if obj.city:
+            city_name = obj.city.name
+        return city_name
+    
+    def get_community(self,obj):
+        community_name = ""
+        if obj.sub_religion:
+            community_name = obj.sub_religion.name
+        return community_name
+    
+    def get_religion(self,obj):
+        religion_name = ""
+        if obj.religion:
+            religion_name = obj.religion.name
+        return religion_name
+
+
+    def get_profile_image(self, obj):
+        request = self.context.get("request")
+    
+        if obj.profile_image and hasattr(obj.profile_image, 'url'):
+            return request.build_absolute_uri(obj.profile_image.url)
+        
+        return None
+    
+    def get_occupation(self,obj):
+        occupation_name = ""
+        if obj.occupation:
+            occupation_name = obj.occupation.name
+        return occupation_name
+
+    def get_is_premium_member(self,obj):
+        return obj.user_plans.exists()
