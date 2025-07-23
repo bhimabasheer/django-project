@@ -1,0 +1,27 @@
+from django.db import models
+from django.utils import timezone
+from users.models import Users
+
+class AdminRecommentProfile(models.Model):
+    user = models.ForeignKey(
+        Users, 
+        on_delete=models.CASCADE,
+        related_name='admin_recommented_from'
+    )
+    recommented = models.ForeignKey(
+        Users,
+        on_delete=models.CASCADE,
+        related_name='admin_recommented_to'
+    )
+    created_by = models.CharField(max_length=128)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'admin_recomment_profile'
+        verbose_name = 'Admin Recommended Profile'
+        verbose_name_plural = 'Admin Recommended Profiles'
+        unique_together = ('user', 'recommented')
+
+    def __str__(self):
+        return f"{self.user} recommended {self.recommented}"
