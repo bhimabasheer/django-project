@@ -1,0 +1,462 @@
+from rest_framework import serializers
+from users.models import Users
+from common.models import ListValue
+from django.db import IntegrityError
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.db.models import Q
+from django.contrib.auth.hashers import make_password
+import sys
+import re
+import random
+from .models import OTP
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from email_validator import validate_email as validate_real_email, EmailNotValidError
+from click_for_marry import constants as const
+from utils.helpers import Utils
+from datetime import timedelta
+from django.utils import timezone
+from .utils import Utils as AccountUtils
+
+
+
+# for mobile app
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Users
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+class PreRegisterSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        try:
+            identifier = data["identifier"]
+            identifier = identifier.strip().lower()
+            identifier = int(identifier)           
+        except:
+            raise serializers.ValidationError(const.PHONE_NUMBER_LENGTH_NOT_VALID)
+        identifier = data["identifier"]
+        if Users.objects.filter(Q(phone=str(identifier))).exists():
+            raise serializers.ValidationError(const.PHONE_NUMBER_ALREADY_USED)
+        if Utils.validate_otp_time(identifier)["has_error"]:
+            raise serializers.ValidationError(Utils.validate_otp_time(identifier)["message"])
+        if data.get("password") != data.get("confirm_password"):
+            raise serializers.ValidationError(const.PASSWORD_MISMATCH)
+        
+        return data
+
+    def create_otp(self, data):
+        # code = str(random.randint(100000, 999999))
+        code = '1234'
+        identifier = data["identifier"]
+
+        OTP.objects.create(phone=str(identifier), code=code)
+
+        return code
+
+
+class CreateAccountWithOTPSerializer(serializers.Serializer):
+    identifier = serializers.CharField()  # Email or phone
+    otp = serializers.CharField()
+    password = serializers.CharField()
+    confirm_password = serializers.CharField()
+
+    def validate(self, data):
+        identifier = data.get("identifier", "").strip().lower()
+        try:
+            identifier = data["identifier"]
+            identifier = int(identifier)
+        except:
+            raise serializers.ValidationError(const.PHONE_NUMBER_LENGTH_NOT_VALID)
+        
+        if Users.objects.filter(Q(phone=str(identifier))).exists():
+            raise serializers.ValidationError(const.PHONE_NUMBER_ALREADY_USED)
+        
+        otp = data.get("otp")
+        phone = data["identifier"]
+        if AccountUtils.verify_create_acccount_otp(otp=otp,phone=phone)["has_error"]:
+            raise serializers.ValidationError(AccountUtils.verify_create_acccount_otp(otp=otp,phone=phone)["message"])
+        if data.get("password") != data.get("confirm_password"):
+            raise serializers.ValidationError(const.PASSWORD_MISMATCH)
+        
+        return data
+
+    def create(self, validated_data):
+        identifier = validated_data['identifier']
+        password = validated_data['password']
+
+        user = Users.objects.create(
+            username=identifier,
+            password=make_password(password),
+            phone=identifier,
+            phone_status='Y'
+        )
+        return user
+
+
+class ProfileCreatedForSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Users
+        fields = [
+            'first_name',
+            'last_name',
+            'gender',
+            'profile_created_for',
+        ]
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    username_field = 'username'
+
+    def validate(self, attrs):
+        username = attrs.get("username")
+        password = attrs.get("password")
+
+        try:
+            user = Users.objects.filter(
+                Q(email=username) | Q(phone=username) | Q(aec_id=username)
+            )
+            if not user.exists():
+                raise serializers.ValidationError("Invalid login credentials")
+
+            if user.count() > 1:
+                raise serializers.ValidationError("Multiple users found with given credentials. Contact support.")
+
+            user = user.first()
+        except Users.DoesNotExist:
+            raise serializers.ValidationError("Invalid login credentials")
+
+        if not user.check_password(password):
+            raise serializers.ValidationError("Invalid login credentials")
+
+        if not user.is_active:
+            raise serializers.ValidationError("User is inactive")
+
+        attrs['username'] = user.username
+        self.user = user
+        return super().validate(attrs)
+
+# class CustomTokenObtainSerializer(serializers.Serializer):
+#     identifier = serializers.CharField()
+#     password = serializers.CharField(write_only=True)
+#     access = serializers.CharField(read_only=True)
+#     refresh = serializers.CharField(read_only=True)
+#     identifier_type = serializers.CharField(read_only=True)
+#     user = serializers.HiddenField(default=None)  # Optional, just for clarity
+
+#     def validate_identifier(self, value):
+#         value = value.strip().lower()
+        
+#         # First check if it's an email
+#         if '@' in value:
+#             try:
+#                 valid = validate_real_email(value, check_deliverability=True)
+#                 return valid.email
+#             except EmailNotValidError as e:
+#                 raise serializers.ValidationError(str(e))
+        
+#         # Then check if it's a phone number (all digits or starts with +)
+#         if value.startswith('+') or value.isdigit():
+#             phone = re.sub(r'\D', '', value)
+#             if len(phone) != 10:
+#                 raise serializers.ValidationError("Phone number must be 10 digits.")
+#             return phone
+        
+#         # Otherwise treat as AEC ID (no validation, just return as-is)
+#         return value
+#     def validate(self, attrs):
+#         identifier = attrs.get('identifier')
+        
+#         # First validate the identifier format
+#         try:
+#             validated_identifier = self.validate_identifier(identifier)
+#         except serializers.ValidationError as e:
+#             raise serializers.ValidationError({"identifier": str(e)})
+
+#         password = attrs.get('password')
+
+#         identifier_type = None
+#         user = None
+
+#         # Identify by email, phone or AEC ID
+#         if "@" in validated_identifier:
+#             user = Users.objects.filter(email=validated_identifier.lower()).first()
+#             identifier_type = "email"
+#         elif validated_identifier.isdigit() and len(validated_identifier) == 10:
+#             user = Users.objects.filter(phone=validated_identifier).first()
+#             identifier_type = "phone"
+#         else:
+#             user = Users.objects.filter(aec_id=validated_identifier).first()
+#             identifier_type = "aec_id"
+
+#         if user is None or not user.check_password(password):
+#             raise serializers.ValidationError("Invalid login credentials")
+
+#         if not user.is_active:
+#             raise serializers.ValidationError("User is inactive")
+
+#         refresh = RefreshToken.for_user(user)
+#         return {
+#             "access": str(refresh.access_token),
+#             "refresh": str(refresh),
+#             "identifier_type": identifier_type,
+#             "user": user, # pass user to view
+#             "onboarding_steps": user.onboarding_steps 
+#         }
+
+class CustomTokenObtainSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        raw_identifier = attrs.get("identifier", "")
+        identifier = raw_identifier.strip().lower()
+        password = attrs.get("password")
+        
+        result = Utils.validate_login_identifier(identifier,is_account_creation=False)
+        if result["has_error"]:
+            raise serializers.ValidationError(result["message"])
+
+        if result["email"]:
+            self.cleaned_identifier = result["email"]
+            self.identifier_type = const.EMAIL
+            user = Users.objects.filter(email=self.cleaned_identifier)
+        elif result["phone"]:
+            self.cleaned_identifier = result["phone"]
+            self.identifier_type = const.PHONE
+            user = Users.objects.filter(phone=str(self.cleaned_identifier))
+        else:
+            self.cleaned_identifier = identifier 
+            self.identifier_type = const.AEC_ID
+            user = Users.objects.filter(aec_id=self.cleaned_identifier)
+
+        if user.first() is None:
+            raise serializers.ValidationError("Invalid login credentials")
+        if not user.first().check_password(password):
+            raise serializers.ValidationError("Invalid login credentials")
+        if not user.first().is_active:
+            raise serializers.ValidationError("User is inactive")
+        
+        user = user.prefetch_related('user_plans',"activity_created_user")
+        user = user.first()
+        
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+        return {
+            "access": str(access_token),
+            "refresh": str(refresh),    
+            "identifier_type": self.identifier_type,
+            "user": user,
+            "onboarding_steps": user.onboarding_steps
+        }
+class OTPForLoginSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+
+    def validate(self, data):
+        if not data["identifier"]:
+            raise serializers.ValidationError(const.IDENTIFIER_NOT_VALID)
+        validate_identifier = Utils.validate_login_with_otp_identifier(value=data["identifier"])
+        if validate_identifier["has_error"]:
+            raise serializers.ValidationError(validate_identifier["message"])
+        
+        if Utils.validate_otp_time(validate_identifier["username"])["has_error"]:
+            raise serializers.ValidationError(Utils.validate_otp_time(validate_identifier["username"])["message"])
+        
+        return validate_identifier
+
+    def create_otp(self, data,platform):
+        # code = str(random.randint(100000, 999999))
+        code = '123456'
+        if platform == const.PLATFORM_MOBILE:
+            code = "1234"
+        is_email = data["is_email"]
+        username = data["username"]
+        if is_email:
+            OTP.objects.create(email=username, code=code)
+        else:
+            OTP.objects.create(phone=username, code=code)
+        print(f"OTP for {username}: {code}")
+        return code
+
+class VerifyLoginOTPSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    code = serializers.CharField()
+
+    def validate(self, data):
+
+        if not data["identifier"]:
+            raise serializers.ValidationError(const.IDENTIFIER_NOT_VALID)
+        validate_identifier = Utils.validate_login_with_otp_identifier(value=data["identifier"])
+        if validate_identifier["has_error"]:
+            raise serializers.ValidationError(validate_identifier["message"])
+        
+        response = AccountUtils.verify_login_with_otp_code(data["code"], validate_identifier)
+        if response["has_error"]:
+            raise serializers.ValidationError(response["message"])
+        
+
+        user = Users.objects.filter(username=validate_identifier["username"]).prefetch_related("user_plans","activity_created_user").first()
+        if not user:
+            raise serializers.ValidationError("User does not exist")
+
+        refresh = RefreshToken.for_user(user)
+
+        return {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            "user" : user
+        }
+class WebPreRegisterSerializer(serializers.Serializer):
+    profile_for = serializers.IntegerField()
+    name = serializers.CharField(max_length=100)
+    identifier = serializers.CharField()
+
+    def validate(self, data):
+        fields = ['profile_for','name','identifier']
+        for field in fields:
+            if not field in data and not data[field]:
+                raise serializers.ValidationError(f"Please enter a valid data for {field}")
+            
+        validate_identifier_response = Utils.validate_identifier(data["identifier"])
+        if validate_identifier_response["has_error"]:
+            raise serializers.ValidationError(validate_identifier_response["message"])
+        
+        otp_validation = Utils.validate_otp_time(data["identifier"])
+        if otp_validation["has_error"]:
+            raise serializers.ValidationError(otp_validation["message"])
+        return validate_identifier_response
+
+    def create_otp(self,data):
+        #code = str(random.randint(100000, 999999))
+        code = '123456'
+        query = {"code" : code}
+        if data.get("email",None):
+             query.update({
+                    "email" : data["email"]
+                })
+        else:
+            query.update({
+                "phone" : data["phone"]
+            })
+        OTP.objects.create(**query)
+        return code
+    
+#verify OTP
+class WebVerifyOTPSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+    otp = serializers.CharField()
+
+    def validate(self, data):
+        fields = ['identifier','otp']
+        for field in fields:
+            if not field in data and not data[field]:
+                raise serializers.ValidationError(f"Please enter a valid data for {field}")
+        
+        validate_data = Utils.validate_identifier(data["identifier"])
+        if validate_data["has_error"]:
+            raise serializers.ValidationError(validate_data["message"])
+        
+        # Verify OTP
+        response = AccountUtils.verify_otp(data["otp"], validate_data)
+        if response["has_error"]:
+            raise serializers.ValidationError(response["message"])
+        return response
+    
+#Account Creation
+'''
+class WebCreateAccountSerializer(serializers.ModelSerializer):
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = Users
+        fields = ['identifier', 'password', 'confirm_password']
+        extra_kwargs = {
+            'password': {'write_only': True, 'min_length': 8},
+            'identifier': {'required': True}
+        }
+
+    def validate(self, data):
+        # Only validate password match initially
+        response = validate_identifier(value = data.get("identifier",None))
+        if response and response["identifier"] == None:
+            raise serializers.ValidationError(response["message"])
+        if data['password'] != data['confirm_password']:
+            raise serializers.ValidationError({"password": "Passwords do not match"})
+        data["is_email_identifier"] = response["is_email_identifier"]
+        return data
+
+    def create(self, validated_data):
+        identifier = validated_data['identifier'].strip().lower()
+        password = validated_data['password']
+        query = {}
+        if validated_data["is_email_identifier"] == True:
+            query["email"] = identifier
+        else:
+            query["phone"] = identifier
+        
+        user_data = Users.objects.filter(**query)
+        if user_data:
+            user_data = user_data.last()
+            if user_data.password:
+                serializers.ValidationError("Password is already set")
+            else:
+                user_data.set_password(password)
+                user_data.save()
+
+'''
+class WebCreateAccountSerializer(serializers.ModelSerializer):
+    identifier = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = Users
+        fields = ['identifier', 'password', 'confirm_password']
+        extra_kwargs = {
+            'password': {'write_only': True, 'min_length': 8},
+            'identifier': {'required': True}
+        }
+    def validate(self, data):
+        fields = ['identifier','password','confirm_password']
+        for field in fields:
+            if not field in data and not data[field]:
+                raise serializers.ValidationError(f"Please enter a valid data for {field}")
+            
+        validate_data = Utils.validate_account_create_identifier(data["identifier"])
+        if validate_data["has_error"]:
+            raise serializers.ValidationError(validate_data["message"])
+
+        create_account_response = Utils.validate_create_account_data(data)
+        if create_account_response["has_error"]:
+            raise serializers.ValidationError(create_account_response["message"])
+        
+        return validate_data
+        
+    
+    def set_password(self, data,password):
+        """
+        Set the user's password and hash it.
+        """
+        user = Users.objects.filter(
+            Q(email=data.get('email')) | Q(phone=data.get('phone'))
+        ).prefetch_related("user_plans","activity_created_user").first()
+        user.set_password(password)
+        user.save()
+        return user
+    
+    def update(self, instance, validated_data):
+        
+        instance.set_password(validated_data['password'])
+        instance.save()
+        return instance
+
+
