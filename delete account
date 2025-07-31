@@ -1,0 +1,90 @@
+class RemoveAccountAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self,request,userId):
+        try:
+            user = request.user
+
+            if user.id != userId:
+                return Response({'success':False,'message':'Unauthorized access'},
+                                status=status.HTTP_403_FORBIDDEN)
+             
+            action = request.query_params.get('action')
+            reason = request.data.get('reason')
+
+            if action not in ['deactivate', 'delete']:
+                return error_response("Invalid action. Use 'deactivate' or 'delete'"),
+        
+            if not reason:
+                message = 'Deactivate reason is required' \
+                if action == 'deactivate' else 'Deletion reason is required'
+                return error_response(message)
+            
+            if reason not in dict(AccountDeletionReason.REASON_CHOICES):
+                    return error_response('Invalid reason provided.')
+            
+            AccountDeletionReason.objects.create(user=user,reason=reason)
+            if action == 'deactivate':
+                user.status = Users.INACTIVE
+                user.save()
+                return success_response('Acccount Deactivated')
+            
+            serializer = OTPForLoginSerializer(data={'phone':user.phone})
+            if serializer.is_valid():
+               otp_code = serializer.create_otp(user.phone)
+               return success_response({'message': 'OTP sent successfully', 'otp': otp_code})
+            
+            return error_response(serializer.errors)
+        except Exception as e:
+            return server_error_response(error_detail=e)
+
+class VerifyDeletionOTPAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self,request):
+        user = request.user
+        otp_in = request.data.get('otp')
+        if not otp_in:
+            return error_response('OTP is required')
+        try:
+            otp_out = OTP.objects.filter(phone=user.phone).latest('id')
+            if otp_out.code == otp_in:
+                user.is_active = False
+                user.save()
+                return success_response('Account has been Deleted')
+        except OTP.DoesNotExist:
+            return error_response('No OTP sent. Please request OTP again')
+
+
+
+
+# serializers 
+              class OTPForLoginSerializer(serializers.Serializer):
+    identifier = serializers.CharField()
+
+    def validate(self, data):
+        if not data["identifier"]:
+            raise serializers.ValidationError(const.IDENTIFIER_NOT_VALID)
+        validate_identifier = Utils.validate_login_with_otp_identifier(value=data["identifier"])
+        if validate_identifier["has_error"]:
+            raise serializers.ValidationError(validate_identifier["message"])
+        
+        if Utils.validate_otp_time(validate_identifier["username"])["has_error"]:
+            raise serializers.ValidationError(Utils.validate_otp_time(validate_identifier["username"])["message"])
+        
+        return validate_identifier
+
+    def create_otp(self, data,platform):
+        # code = str(random.randint(100000, 999999))
+        code = '123456'
+        if platform == const.PLATFORM_MOBILE:
+            code = "1234"
+        is_email = data["is_email"]
+        username = data["username"]
+        if is_email:
+            OTP.objects.create(email=username, code=code)
+        else:
+            OTP.objects.create(phone=username, code=code)
+        print(f"OTP for {username}: {code}")
+        return code
+
+  
