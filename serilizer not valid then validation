@@ -1,0 +1,9 @@
+if not serializer.is_valid():
+                error = serializer.errors
+                errors = json.loads(json.dumps(error))
+
+                    # combine errors to form a single word
+                errors_data = Utils.extract_validation_error(errors)
+                return Response(error_(message=errors_data),status=status.HTTP_200_OK)
+            
+            validate_data = serializer.validated_data
