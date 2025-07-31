@@ -1,0 +1,38 @@
+from rest_framework import serializers
+from django.contrib.auth import authenticate
+from django.contrib.auth import get_user_model
+from click_for_marry import constants as const
+
+User = get_user_model()
+
+class AdminLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        username = data.get("username")
+        password = data.get("password")
+
+        user = authenticate(username=username, password=password)
+        if not user:
+            raise serializers.ValidationError(const.INVALID_CREDENTIALS)
+        if not user.is_staff:
+            raise serializers.ValidationError(const.NOT_AUTHORIZED_ADMIN)
+        if not user.is_active:
+            raise serializers.ValidationError(const.ACCOUNT_DISABLED)
+
+        data["user"] = user
+
+
+
+
+
+or 
+
+
+
+
+
+class AdminLoginSerializer(serializers.Serializer):
+    username_or_email = serializers.CharField()
+    password = serializers.CharField(write_only=True)
