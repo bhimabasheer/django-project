@@ -1,0 +1,30 @@
+# Product view analysis
+
+import pandas as pd
+
+def analyze_products_views(csv_path):
+  
+    df = pd.read_csv(csv_path)
+    df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
+
+    grouped = df.groupby(['parent_org', 'brands'])['product_view_count'].sum().reset_index()
+
+    parent_totals = grouped.groupby('parent_org')['product_view_count'].sum().reset_index()
+    parent_totals = parent_totals.sort_values(by='product_view_count', ascending=False)
+
+    for _, parent_row in parent_totals.iterrows():
+        parent = parent_row['parent_org']
+        total = parent_row['product_view_count']
+        print(f"{parent} : {total}")
+
+        brand_rows = grouped[grouped['parent_org'] == parent]
+        brand_rows = brand_rows.sort_values(by='product_view_count', ascending=False)
+
+        for _, brand_row in brand_rows.iterrows():
+            brand = brand_row['brands']
+            brand_count = brand_row['product_view_count']
+            print(f"  {brand} : {brand_count}")
+        print()
+
+csv_file = 'downloads/product_views.csv'  
+analyze_products_views(csv_file)
