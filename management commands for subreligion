@@ -1,0 +1,77 @@
+from django.core.management.base import BaseCommand
+from django.db import transaction
+from common.models import Religion, ReligionSub
+
+class Command(BaseCommand):
+    help = "Load religions and their sub-categories using names"
+
+    def handle(self, *args, **options):
+        religion_roots = [
+            'Buddhist', 'Christian', 'Hindu', 'Jain',
+            'Islam', 'Parsi', 'Sikh', 'Other', 'Atheism'
+        ]
+
+        sub_rel = [
+            ('Christian', 'Catholic'),
+            ('Christian', 'Orthodox'),
+            ('Christian', 'Protestant'),
+            ('Christian', 'Others'),
+            ('Jain', 'Digambar'),
+            ('Jain', 'Shwetambar'),
+            ('Jain', 'Others'),
+            ('Islam', 'Shafi'),
+            ('Islam', 'Salafi'),
+            ('Islam', 'Hanafi'),
+            ('Islam', 'Shia'),
+            ('Islam', 'Sunni'),
+            ('Islam', 'Others'),
+            ('Hindu', 'Vaishnavism'),
+            ('Hindu', 'Shaivism'),
+            ('Hindu', 'Shaktism'),
+            ('Hindu', 'Smartism'),
+            ('Hindu', 'Arya Samaj'),
+            ('Hindu', 'Brahmo Samaj'),
+            ('Hindu', 'Lingayatism'),
+            ('Hindu', 'Swaminarayan'),
+            ('Hindu', 'ISKCON'),
+            ('Hindu', 'Nath'),
+            ('Hindu', 'Kabir Panth'),
+            ('Hindu', 'Radha Vallabh'),
+            ('Hindu', 'Pushtimarg'),
+            ('Hindu', 'Mahanubhava'),
+            ('Hindu', 'Swadhyaya'),
+            ('Hindu', 'Satsang'),
+            ('Sikh', 'Udasi'),
+            ('Sikh', 'Nihang'),
+            ('Sikh', 'Namdhari'),
+            ('Buddhist', 'Theravada'),
+            ('Buddhist', 'Mahayana'),
+            ('Buddhist', 'Vajrayana'),
+        ]
+
+        created_r = updated_r = 0
+        created_s = updated_s = skipped_s = 0
+
+        with transaction.atomic():
+            for name in religion_roots:
+                obj, created = Religion.objects.update_or_create(name=name, defaults={'name': name})
+                if created: created_r += 1
+                else: updated_r += 1
+                self.stdout.write(self.style.SUCCESS(f"Created/Updated Religion: {name}"))
+
+            for parent_name, child_name in sub_rel:
+                try:
+                    parent = Religion.objects.get(name=parent_name)
+                    obj, created = ReligionSub.objects.update_or_create(
+                        name=child_name,
+                        defaults={'name': child_name, 'parent': parent}
+                    )
+                    if created: created_s += 1
+                    else: updated_s += 1
+                    self.stdout.write(self.style.SUCCESS(f"Created/Updated '{child_name}' under '{parent_name}'"))
+                except Religion.DoesNotExist:
+                    self.stdout.write(self.style.ERROR(f"Skip subcategory '{child_name}': parent '{parent_name}' not found"))
+                    skipped_s += 1
+
+        self.stdout.write(self.style.SUCCESS(f"✔ Religions: {created_r} created, {updated_r} updated"))
+        self.stdout.write(self.style.SUCCESS(f"✔ Subcategories: {created_s} created, {updated_s} updated, {skipped_s} skipped"))
