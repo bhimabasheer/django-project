@@ -1,0 +1,587 @@
+from email.policy import default
+from rest_framework import serializers
+from subscriptions.models import UserPlan
+from users.models import Users
+from users.serializers import UserAlbumSerializer
+from users.utils import Utils
+
+
+class AdminUserListSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='id')
+    profile_complete_percentage = serializers.SerializerMethodField();
+    user_id = serializers.IntegerField(source="id")
+    profile_complete_percentage = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+    plan_id = serializers.IntegerField(source='user_plan.id', default=None)
+    plan = serializers.CharField(source='user_plan.name', default='')
+    current_location = serializers.CharField(source='current_location.location', default='')
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    plan_id = serializers.IntegerField(source="user_plan.id", default=None)
+    plan = serializers.CharField(source="user_plan.name", default="")
+    current_location = serializers.CharField(
+        source="current_location.location", default=""
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+
+    class Meta:
+        model = Users
+        fields = [
+            'user_id',
+            'aec_id',
+            'phone',
+            'full_name',
+            'age',
+            'current_location',
+            'profile_complete_percentage',
+            'plan_id',
+            'plan',
+            'created_at',
+            'status',
+            'status_display'
+            "user_id",
+            "aec_id",
+            "phone",
+            "full_name",
+            "age",
+            "current_location",
+            "profile_complete_percentage",
+            "plan_id",
+            "plan",
+            "created_at",
+            "status",
+            "status_display",
+        ]
+
+    def get_full_name(self, obj):
+        return obj.get_full_name()
+
+    def get_profile_complete_percentage(self, obj):
+        return Utils.calculate_profile_completion(obj)['overall_completion']
+
+        return Utils.calculate_profile_completion(obj)["overall_completion"]
+
+
+class AdminUserDetailSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(source='id')
+    user_id = serializers.IntegerField(source="id")
+    dob = serializers.DateField(format="%d-%m-%Y")
+    gender = serializers.CharField(source='gender.name', default="")
+    language = serializers.CharField(source='language.name', default="")
+    mother_tongue = serializers.CharField(source='mother_tongue.name', default="")
+    country = serializers.CharField(source='country.name', default="")
+    religion = serializers.CharField(source='religion.name', default="")
+    sub_religion = serializers.CharField(source='sub_religion.name', default="")
+    state = serializers.CharField(source='district.state', default="")
+    district = serializers.CharField(source='district.district', default="")
+    town = serializers.CharField(source='town.name', default="")
+    pin_code = serializers.CharField(source='living_pin', default="")
+    permanent_state = serializers.CharField(source='permanent_district.state', default="")
+    permanent_district = serializers.CharField(source='permanent_district.district', default="")
+    permanent_town = serializers.CharField(source='permanent_town.name', default="")
+    permanent_pin = serializers.CharField(source='pin', default="")
+    qualification = serializers.CharField(source='qualification.name', default="")
+    course = serializers.CharField(source='course.name', default="")
+    sector = serializers.CharField(source='sector.name', default="")
+    employment_type = serializers.CharField(source='get_employment_type_display', read_only=True)
+    occupation = serializers.CharField(source='occupation.name', read_only=True)
+    annual_income = serializers.CharField(source='annual_income.income', default="")
+    blood_group = serializers.CharField(source='blood_group.name', default="")
+    complexion = serializers.CharField(source='complexion.name', default="")
+    body_type = serializers.CharField(source='body_type.name', default="")
+    physical_status = serializers.CharField(source='physical_status.name', default="")
+    status = serializers.CharField(source='get_status_display', read_only=True)
+    created_on = serializers.DateTimeField(format="%d-%b-%y", read_only=True, source='created_at')
+    gender = serializers.CharField(source="gender.name", default="")
+    language = serializers.CharField(source="language.name", default="")
+    mother_tongue = serializers.CharField(source="mother_tongue.name", default="")
+    country = serializers.CharField(source="country.name", default="")
+    religion = serializers.CharField(source="religion.name", default="")
+    sub_religion = serializers.CharField(source="sub_religion.name", default="")
+    state = serializers.CharField(source="district.state", default="")
+    district = serializers.CharField(source="district.district", default="")
+    town = serializers.CharField(source="town.name", default="")
+    pin_code = serializers.CharField(source="living_pin", default="")
+    permanent_state = serializers.CharField(
+        source="permanent_district.state", default=""
+    )
+    permanent_district = serializers.CharField(
+        source="permanent_district.district", default=""
+    )
+    permanent_town = serializers.CharField(source="permanent_town.name", default="")
+    permanent_pin = serializers.CharField(source="pin", default="")
+    qualification = serializers.CharField(source="qualification.name", default="")
+    course = serializers.CharField(source="course.name", default="")
+    sector = serializers.CharField(source="sector.name", default="")
+    employment_type = serializers.CharField(
+        source="get_employment_type_display", read_only=True
+    )
+    occupation = serializers.CharField(source="occupation.name", read_only=True)
+    annual_income = serializers.CharField(source="annual_income.income", default="")
+    blood_group = serializers.CharField(source="blood_group.name", default="")
+    complexion = serializers.CharField(source="complexion.name", default="")
+    body_type = serializers.CharField(source="body_type.name", default="")
+    physical_status = serializers.CharField(source="physical_status.name", default="")
+    status = serializers.CharField(source="get_status_display", read_only=True)
+    created_on = serializers.DateTimeField(
+        format="%d-%b-%y", read_only=True, source="created_at"
+    )
+    last_login = serializers.DateTimeField(format="%d-%b-%y", read_only=True)
+    profile_complete_percentage = serializers.SerializerMethodField();
+    profile_complete_percentage = serializers.SerializerMethodField()
+    user_albums = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Users
+        fields = [
+            'user_id',
+            'profile_image',
+            'first_name',
+            'last_name',
+            'dob',
+            'gender',
+            'language',
+            'mother_tongue',
+            'country',
+            'religion',
+            'sub_religion',
+            "user_id",
+            "profile_image",
+            "first_name",
+            "last_name",
+            "dob",
+            "gender",
+            "language",
+            "mother_tongue",
+            "country",
+            "religion",
+            "sub_religion",
+            # address
+            'state',
+            'district',
+            'town',
+            'pin_code',
+            "state",
+            "district",
+            "town",
+            "pin_code",
+            # permanent address
+            'permanent_state',
+            'permanent_district',
+            'permanent_town',
+            'permanent_pin',
+            "permanent_state",
+            "permanent_district",
+            "permanent_town",
+            "permanent_pin",
+            # career
+            'qualification',
+            'course',
+            'company',
+            'sector',
+            'employment_type',
+            'occupation',
+            'annual_income',
+            "qualification",
+            "course",
+            "company",
+            "sector",
+            "employment_type",
+            "occupation",
+            "annual_income",
+            # institution missing
+            # physical appearance
+            'weight',
+            'height',
+            'blood_group',
+            'complexion',
+            'body_type',
+            'physical_status',
+            "weight",
+            "height",
+            "blood_group",
+            "complexion",
+            "body_type",
+            "physical_status",
+            # others
+            'status',
+            "status",
+            # canvasser missing
+            'created_on',
+            'last_login',
+            'profile_complete_percentage',
+            "created_on",
+            "last_login",
+            "profile_complete_percentage",
+            # albums
+            'user_albums'
+            "user_albums",
+        ]
+
+    def get_user_albums(self, obj):
+@@ -124,4 +138,23 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
+        return UserAlbumSerializer(user_albums, many=True).data
+
+    def get_profile_complete_percentage(self, obj):
+        return Utils.calculate_profile_completion(obj)['overall_completion']
+        return Utils.calculate_profile_completion(obj)["overall_completion"]
+
+
+class AdminUserPlanSerializer(serializers.ModelSerializer):
+    plan = serializers.CharField(source="plan.name", default="")
+    duration = serializers.IntegerField(source="plan.duration", default=None)
+    balance = serializers.IntegerField(source="days_remaining", default=None)
+    status_text = serializers.CharField(source="get_status_display")
+
+    class Meta:
+        model = UserPlan
+        fields = [
+            "id",
+            "plan",
+            "transaction_id",
+            "duration",
+            "balance",
+            "status",
+            "status_text",
+        ]
+Modified file
+admin_panel/user_management/views.py
+
+
+
+@@ -1,19 +1,23 @@
+from django.db.models import Value, CharField, Q
+from django.db.models.functions import Concat
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.generics import ListAPIView
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.viewsets import ViewSet
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from admin_panel.user_management.serializers import AdminUserListSerializer, AdminUserDetailSerializer
+from admin_panel.user_management.serializers import (
+    AdminUserListSerializer,
+    AdminUserDetailSerializer,
+    AdminUserPlanSerializer,
+)
+from admin_panel.utils import AdminUtils
+from subscriptions.models import UserPlan
+from users.models import Users
+from utils.api_response import success_, error_
+from click_for_marry import constants as const
+from utils.helpers import Utils as CommonUtils
+
+
+class AdminUserListView(ListAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+@@ -21,80 +25,7 @@ class AdminUserListView(ListAPIView):
+
+    def get_queryset(self):
+        try:
+            queryset = (Users.objects.prefetch_related(
+                'current_location',
+                'user_plan'
+            ).exclude(
+                is_superuser=True,
+            ).order_by("-id"))
+            params = self.request.query_params
+
+            user_id = params.get('user_id')
+            if user_id:
+                queryset = queryset.filter(id=user_id)
+            aec_id = params.get('aec_id')
+            if aec_id:
+                queryset = queryset.filter(aec_id__icontains=aec_id)
+            phone = params.get('phone')
+            if phone:
+                queryset = queryset.filter(phone__contains=phone)
+            name = params.get('name')
+            # if name:
+            #     cleaned_name = name.replace(" ", "").lower()
+            #     queryset = queryset.annotate(
+            #         full_name=Concat(
+            #             'first_name',
+            #             Value(''),
+            #             'last_name',
+            #             output_field=CharField()
+            #         )
+            #     ).filter(
+            #         Q(first_name__icontains=cleaned_name) |
+            #         Q(last_name__icontains=cleaned_name) |
+            #         Q(full_name__icontains=cleaned_name)
+            #     )
+            if name:
+                words = name.strip().lower().split()
+                queryset = queryset.annotate(
+                    full_name=Concat(
+                        'first_name',
+                        Value(' '),
+                        'last_name',
+                        output_field=CharField()
+                    )
+                )
+                q_object = Q()
+                for word in words:
+                    q_object &= (
+                            Q(first_name__icontains=word) |
+                            Q(last_name__icontains=word) |
+                            Q(full_name__icontains=word)
+                    )
+
+                queryset = queryset.filter(q_object)
+            age = params.get('age')
+            if age:
+                queryset = queryset.filter(
+                    age=age
+                )
+            location = params.get('location')
+            if location:
+                queryset = queryset.filter(
+                    current_location_id=location
+                )
+            plan_id = params.get('plan_id')
+            if plan_id:
+                queryset = queryset.filter(
+                    user_plan=plan_id
+                )
+            created_on = params.get('created_on')
+            if created_on:
+                queryset = queryset.filter(created_at__date=created_on)
+            user_status = params.get('status')
+            if user_status:
+                queryset = queryset.filter(
+                    status=user_status
+                )
+            queryset = AdminUtils.get_admin_user_list_queryset(self.request)
+            return queryset
+        except Exception as e:
+            print(f"Error in get_queryset: {e}")
+@@ -103,20 +34,19 @@ class AdminUserListView(ListAPIView):
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        params = self.request.query_params
+        page = params.get('page', const.PAGE)
+        limit = params.get('limit', const.LIMIT)
+        page = params.get("page", const.PAGE)
+        limit = params.get("limit", const.LIMIT)
+
+        pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+
+        data = pagination["queryset"]
+        serializer = self.get_serializer(data, many=True, context={'request': request})
+        serializer = self.get_serializer(data, many=True, context={"request": request})
+
+        pagination_details = {
+            "page": page,
+            "limit": limit,
+            "count": queryset.count()
+        pagination_details = {"page": page, "limit": limit, "count": queryset.count()}
+        response_data = {
+            "user_data": serializer.data,
+            "pagination_details": pagination_details,
+        }
+        response_data = {"user_data": serializer.data, "pagination_details": pagination_details}
+        return Response(success_(response=response_data), status=status.HTTP_200_OK)
+
+@@ -126,51 +56,54 @@ class AdminUserViewSet(ViewSet):
+
+    def get_user(self, user_id):
+        try:
+            user = (
+                Users.objects.select_related(
+                    'gender',
+                    'language',
+                    'mother_tongue',
+                    'country',
+                    'religion',
+                    'sub_religion',
+                    'district',
+                    'town',
+                    'permanent_district',
+                    'permanent_town',
+                    'qualification',
+                    'course',
+                    'sector',
+                    'occupation',
+                    'annual_income',
+                    'blood_group',
+                    'complexion',
+                    'body_type',
+                    'physical_status'
+                ).prefetch_related(
+                    'albums'
+                ).get(id=user_id)
+            )
+            user = AdminUtils.get_admin_user_object(user_id)
+            return user
+        except Users.DoesNotExist as e:
+            raise e
+
+    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=["get"])
+    def profile(self, request, pk):
+        try:
+            user = self.get_user(pk)
+            serializer = AdminUserDetailSerializer(user)
+            return Response(success_(
+                response=serializer.data,
+                message="User profile fetched successfully."
+            ), status=status.HTTP_200_OK)
+            return Response(
+                success_(
+                    response=serializer.data,
+                    message="User profile fetched successfully.",
+                ),
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                error_(
+                    message=str(e),
+                ),status=status.HTTP_400_BAD_REQUEST
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=["get"])
+    def plans(self, request, pk):
+        pass
+        # user = self.get_user(pk)
+        queryset = UserPlan.objects.filter(user_id=pk).prefetch_related("plan")
+
+        params = self.request.query_params
+        page = params.get("page", const.PAGE)
+        limit = params.get("limit", const.LIMIT)
+
+        pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+
+        data = pagination["queryset"]
+        serializer = AdminUserPlanSerializer(
+            data, many=True, context={"request": request}
+        )
+
+        pagination_details = {
+            "page": page,
+            "limit": limit,
+            "count": queryset.count(),
+        }
+        response_data = {
+            "plan_data": serializer.data,
+            "pagination_details": pagination_details,
+        }
+        return Response(success_(response=response_data), status=status.HTTP_200_OK)
+Added file
+admin_panel/utils.py
+
+
+
+@@ -0,0 +1,105 @@
+from users.models import Users
+from django.db.models import Value, CharField, Q
+from django.db.models.functions import Concat
+
+
+class AdminUtils:
+    @staticmethod
+    def get_admin_user_object(user_id):
+        """
+        Get user details using user_id
+        """
+        return (
+            Users.objects.select_related(
+                "gender",
+                "language",
+                "mother_tongue",
+                "country",
+                "religion",
+                "sub_religion",
+                "district",
+                "town",
+                "permanent_district",
+                "permanent_town",
+                "qualification",
+                "course",
+                "sector",
+                "occupation",
+                "annual_income",
+                "blood_group",
+                "complexion",
+                "body_type",
+                "physical_status",
+            )
+            .prefetch_related("albums")
+            .get(id=user_id)
+        )
+
+    @staticmethod
+    def get_admin_user_list_queryset(request):
+        """
+        Get queryset for user list in admin panel
+        """
+        queryset = (
+            Users.objects.prefetch_related("current_location", "user_plan")
+            .exclude(is_superuser=True)
+            .order_by("-id")
+        )
+        params = request.query_params
+
+        user_id = params.get("user_id")
+        if user_id:
+            queryset = queryset.filter(id=user_id)
+        aec_id = params.get("aec_id")
+        if aec_id:
+            queryset = queryset.filter(aec_id__icontains=aec_id)
+        phone = params.get("phone")
+        if phone:
+            queryset = queryset.filter(phone__contains=phone)
+        name = params.get("name")
+        # if name:
+        #     cleaned_name = name.replace(" ", "").lower()
+        #     queryset = queryset.annotate(
+        #         full_name=Concat(
+        #             'first_name',
+        #             Value(''),
+        #             'last_name',
+        #             output_field=CharField()
+        #         )
+        #     ).filter(
+        #         Q(first_name__icontains=cleaned_name) |
+        #         Q(last_name__icontains=cleaned_name) |
+        #         Q(full_name__icontains=cleaned_name)
+        #     )
+        if name:
+            words = name.strip().lower().split()
+            queryset = queryset.annotate(
+                full_name=Concat(
+                    "first_name", Value(" "), "last_name", output_field=CharField()
+                )
+            )
+            q_object = Q()
+            for word in words:
+                q_object &= (
+                    Q(first_name__icontains=word)
+                    | Q(last_name__icontains=word)
+                    | Q(full_name__icontains=word)
+                )
+
+            queryset = queryset.filter(q_object)
+        age = params.get("age")
+        if age:
+            queryset = queryset.filter(age=age)
+        location = params.get("location")
+        if location:
+            queryset = queryset.filter(current_location_id=location)
+        plan_id = params.get("plan_id")
+        if plan_id:
+            queryset = queryset.filter(user_plan=plan_id)
+        created_on = params.get("created_on")
+        if created_on:
+            queryset = queryset.filter(created_at__date=created_on)
+        user_status = params.get("status")
+        if user_status:
+            queryset = queryset.filter(status=user_status)
+        return queryset
