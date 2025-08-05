@@ -1,0 +1,26 @@
+# Product Knowledge Graph API
+
+import requests
+
+def fetch_sku_details(product_id):
+    url = f"https://dev.shopalyst.com/shopalyst-service/v1/products/{product_id}"
+    response = requests.get(url)
+
+    if response.status_code != 200:
+        print(f"Failed to fetch data for product ID: {product_id}")
+        return
+
+    data = response.json()
+    skus = data.get("skus", [])
+
+    for i, sku in enumerate(skus, start=1):
+        print(f"--------------------------\nProduct {i}")
+        print(f"skuId : {sku.get('skuId')}")
+        print(f"shade : {sku.get('shade')}")
+        print(f"offerPrice : {sku.get('offerPrice')}")
+        print(f"title : {sku.get('title')}")
+    print("--------------------------")
+
+
+product_id = "12C7BFC3752D4209"
+fetch_sku_details(product_id)
