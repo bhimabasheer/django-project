@@ -1,0 +1,464 @@
+# Create your views here.
+# views.py
+from django.shortcuts import render
+from rest_framework.views import APIView
+
+from .models import Country
+from .models import CountryWithDialCode
+from .models import City
+from .models import Place
+from .models import District
+from .models import Religion
+from .models import ReligionSub
+from .models import Caste
+from .models import Course
+from .models import ListValue 
+from .models import Qualification
+from .models import OccupationParent
+from .models import Occupation
+from .models import Income
+from .models import Interest
+from .models import Personality
+from .models import FAQ
+from .models import NotificationHistory, NotificationSettings, ReadStatus, NotificationType, Activity, UserRating
+from utils.api_response import success_response
+
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models import Q
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+
+from django.shortcuts import get_object_or_404
+from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.pagination import PageNumberPagination
+
+from .utils import send_notification
+from .serializers import (NotificationHistorySerializer,NotificationSettingsSerializer,ActivitySerializer, UserRatingSerializer)
+from users.serializers import MatchedUserSerializerFull
+
+
+class CountryList(APIView):
+    permission_classes = []
+    def get(self, request):
+        search = request.GET.get("search")
+        countries = Country.objects.filter(name__icontains=search) if search else Country.objects.all()
+        return success_response({"data": list(countries.values("id", "name"))}, "Country list")
+
+
+class CountryCodeList(APIView):
+    permission_classes = []
+    def get(self, request):
+        countries_code = CountryWithDialCode.objects.all().values("id", "prefix_code") 
+        return success_response({"data": list(countries_code)}, "Country code List")
+
+class StateList(APIView):
+    permission_classes = []
+    def get(self, request):
+        country_id = request.GET.get('country_id')
+        search = request.GET.get('search')
+
+        states = City.objects.filter(
+            **({"parent_id": country_id} if country_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")
+
+        return success_response({"data": list(states)}, "State list")
+
+
+class DistrictList(APIView):
+    permission_classes = []
+    def get(self, request):
+        state_id = request.GET.get('state_id')
+        search = request.GET.get('search')
+
+        districts = District.objects.filter(
+            **({"state_id": state_id} if state_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")
+
+        return success_response({"data": list(districts)}, "District list")
+
+
+class PlaceList(APIView):
+    permission_classes = []
+    def get(self, request):
+        district_id = request.GET.get('district_id')
+        search = request.GET.get('search')
+
+        places = Place.objects.filter(
+            **({"district_id": district_id} if district_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")
+
+        return success_response({"data": list(places)}, "Place list")
+
+
+class ReligionList(APIView):
+    permission_classes = []
+    def get(self, request):
+         search = request.GET.get('search')
+         religions = Religion.objects.filter(name__icontains=search) if search else Religion.objects.all()
+         return success_response({"data": list(religions.values("id", "name"))}, "Religion list")     
+
+class CommunityList(APIView):
+    permission_classes = []
+    def get(self, request):  
+        search = request.GET.get('search')
+        communities = ReligionSub.objects.filter(name__icontains=search) if search else ReligionSub.objects.all()
+        return success_response({"data": list(communities.values("id", "name"))}, "Community list") 
+           
+class CasteList(APIView):
+    permission_classes = []
+    def get(self, request):  
+        parent_id = request.GET.get('parent_id')
+        search = request.GET.get('search')
+        castes = Caste.objects.filter(
+            **({"parent_id": parent_id} if parent_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")  
+        return success_response({"data": list(castes)}, "Cast list")
+    
+class CourseList(APIView):
+    permission_classes = []
+    def get(self, request):  
+        parent_id = request.GET.get('parent_id')
+        search = request.GET.get('search')
+        courses = Course.objects.filter(
+            **({"parent_id": parent_id} if parent_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")  
+        return success_response({"data": list(courses)}, "Course list")   
+     
+class ListValueList(APIView):
+    permission_classes = []
+    def get(self, request):  
+        type = request.GET.get('type')
+        search = request.GET.get('search')
+        list_values = ListValue.objects.filter(
+            **({"type": type} if type else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name","type")  
+        return success_response({"data": list(list_values)})     
+    
+class QualificationList(APIView):
+    permission_classes = []   
+    def get(self,request):
+      search = request.GET.get('search')
+      qualifications = Qualification.objects.filter(name__icontains=search) if search else Qualification.objects.all()
+      return success_response({"data": list(qualifications)}, "Qualification  list")  
+
+class OccupationParentList(APIView):
+    permission_classes = []
+    def get(self,request):
+      search = request.GET.get('search')
+      qualifications = OccupationParent.objects.filter(name__icontains=search) if search else OccupationParent.objects.all()
+      return success_response({"data": list(qualifications)}, "Occupations parent  list")    
+
+class OccupationList(APIView):  
+    permission_classes = []  
+    def get(self, request):  
+        parent_id = request.GET.get('parent_id')
+        search = request.GET.get('search')
+        occupations = Occupation.objects.filter(
+            **({"parent_id": parent_id} if parent_id else {})
+        ).filter(
+            **({"name__icontains": search} if search else {})
+        ).values("id", "name")  
+        return success_response({"data": list(occupations)}, "Occupations list")   
+
+class IncomeList(APIView):
+    permission_classes = []
+    def get(self,request):
+        search = request.GET.get('search')
+        incomes = Income.objects.filter(income__icontains=search) if search else Income.objects.all()
+        return success_response({"data": list(incomes.values("id", "income"))}, "Income list") 
+
+class InterestList(APIView):
+    permission_classes = []
+    def get(self,request):
+        search = request.GET.get('search')
+        type = request.GET.get('type')
+        interests = Interest.objects.filter(
+                **({"interest_type": type} if type else {})
+            ).filter(
+                **({"name__icontains": search} if search else {})
+            ).values("id", "name")  
+        return success_response({"data": list(interests)}, "Interest  list")
+
+class PersonalityList(APIView):
+    permission_classes = []
+    def get(self,request):
+        search = request.GET.get('search')
+        personality = Personality.objects.filter(
+                **({"personality_type": type} if type else {})
+            ).filter(
+                **({"name__icontains": search} if search else {})
+            ).values("id", "name")  
+        return success_response({"data": list(personality)}, "Personality  list")
+
+class FAQList(APIView) :
+    permission_classes = []
+    def get(self,request):
+        faqs = FAQ.objects.all().values('id', 'question', 'answer')
+        return success_response({"data": list(faqs)}, "FAQ list")
+
+# notification set up starts here
+
+class NotificationHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        
+        user = request.user
+        status_filter = request.query_params.get('status')
+        
+        queryset = NotificationHistory.objects.filter(
+            user=user,
+            deleted_at__isnull=True
+        ).select_related('user')
+        
+        if status_filter == 'read':
+            queryset = queryset.filter(read_status=ReadStatus.READ)
+        elif status_filter == 'unread':
+            queryset = queryset.filter(read_status=ReadStatus.UNREAD)
+        
+        today = timezone.now().date()
+        yesterday = today - timezone.timedelta(days=1)
+        
+        # Optimized single query with conditional aggregation
+        notifications = {
+            'today': queryset.filter(created_at__date=today),
+            'yesterday': queryset.filter(created_at__date=yesterday),
+            'older': queryset.exclude(created_at__date__in=[today, yesterday])
+        }
+        
+        return Response({
+            period: NotificationHistorySerializer(items, many=True).data
+            for period, items in notifications.items()
+        })
+        
+
+class NotificationSettingsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        settings = NotificationSettings.objects.filter(
+            user=request.user
+        ).select_related('user')
+        serializer = NotificationSettingsSerializer(settings, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        
+        user = request.user
+        data = request.data.copy()
+        notification_type = data.get('notification_type')
+
+        if notification_type is None:
+            return Response({"error": "notification_type is required"}, status=400)
+
+        instance, created = NotificationSettings.objects.update_or_create(
+            user=user,
+            notification_type=notification_type,
+            defaults={
+                'push': data.get('push', 2),
+                'sms': data.get('sms', 2),
+                'email': data.get('email', 2),
+                'whatsapp':data.get('whatsapp',2)
+            }
+        )
+
+        serializer = NotificationSettingsSerializer(instance)
+        return Response(serializer.data, status=200)
+
+class NotificationSettingsDetailView(RetrieveUpdateAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSettingsSerializer
+    queryset = NotificationSettings.objects.all()
+
+    def get_queryset(self):
+        return self.queryset.filter(user=self.request.user)
+    
+
+class MarkNotificationReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        notification = get_object_or_404(NotificationHistory, id=pk, user=request.user)
+        notification.read_status = ReadStatus.READ
+        notification.save()
+        return Response({
+            "status":"Success",
+            "message": "Marked as read.",
+            "data":pk})
+
+class DeleteNotificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        notification = get_object_or_404(NotificationHistory, id=pk, user=request.user, deleted_at__isnull=True)
+        notification.deleted_at = timezone.now()
+        notification.save()
+        return Response({
+            "status": "Success",
+            "message": "Notification deleted.",
+            "data": pk
+        })
+
+class UndoDeleteNotificationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        print(f"Undo delete called for pk={pk}")
+        notification = get_object_or_404(NotificationHistory, id=pk, user=request.user, deleted_at__isnull=False)
+        notification.deleted_at = None
+        notification.save()
+        return Response({
+            "status": "Success",
+            "message": "Notification restored.",
+            "data": pk
+        })
+
+class ActivityLogView(APIView):
+    permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination
+
+    def get(self, request):
+        user = request.user
+        queryset = Activity.objects.filter(user=user).select_related('to')
+
+        # Filter by activity type
+        activity_type = request.query_params.get('type')
+        if activity_type:
+            queryset = queryset.filter(op__icontains=activity_type)
+
+        # Filter by date range
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if start_date:
+            try:
+                start_date = timezone.datetime.strptime(start_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__gte=start_date)
+            except ValueError:
+                return Response({"error": "Invalid start_date format. Use YYYY-MM-DD."}, status=400)
+        if end_date:
+            try:
+                end_date = timezone.datetime.strptime(end_date, '%Y-%m-%d').date()
+                queryset = queryset.filter(created_at__date__lte=end_date)
+            except ValueError:
+                return Response({"error": "Invalid end_date format. Use YYYY-MM-DD."}, status=400)
+
+        # Pagination
+        paginator = self.pagination_class()
+        paginator.page_size = 10
+        page = paginator.paginate_queryset(queryset, request)
+
+        # Serialize data
+        serializer = ActivitySerializer(page, many=True)
+
+        # Group by today, yesterday, older
+        today = timezone.now().date()
+        yesterday = today - timezone.timedelta(days=1)
+        activities = {
+            'today': [item for item in serializer.data if item['created_at'].startswith(today.isoformat())],
+            'yesterday': [item for item in serializer.data if item['created_at'].startswith(yesterday.isoformat())],
+            'older': [item for item in serializer.data if not (item['created_at'].startswith(today.isoformat()) or item['created_at'].startswith(yesterday.isoformat()))]
+        }
+
+        return paginator.get_paginated_response(activities)
+          
+# Add FeedbackView
+class FeedbackView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = UserRatingSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)
+            return Response({
+                "status": "success",
+                "message": "Feedback submitted successfully.",
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "status": "error",
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        queryset = UserRating.objects.filter(user=request.user).order_by('-created_at')
+        paginator = PageNumberPagination()
+        paginator.page_size = 10
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = UserRatingSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+    
+    def put(self, request, feedback_id):
+            try:
+                feedback = UserRating.objects.get(id=feedback_id, user=request.user)
+            except UserRating.DoesNotExist:
+                return Response({
+                    "status": "error",
+                    "message": "Feedback not found or you don't have permission to edit it."
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = UserRatingSerializer(feedback, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    "status": "success",
+                    "message": "Feedback updated successfully.",
+                    "data": serializer.data
+                }, status=status.HTTP_200_OK)
+            return Response({
+                "status": "error",
+                "errors": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, feedback_id):
+        try:
+            feedback = UserRating.objects.get(id=feedback_id, user=request.user)
+        except UserRating.DoesNotExist:
+            return Response({
+                "status": "error",
+                "message": "Feedback not found or you don't have permission to delete it."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        feedback.delete()
+        return Response({
+            "status": "success",
+            "message": "Feedback deleted successfully."
+        }, status=status.HTTP_204_NO_CONTENT)
+
+class AdminFeedbackView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        queryset = UserRating.objects.all().select_related('user').order_by('-created_at')
+
+        rating = request.query_params.get('rating')
+        if rating:
+            try:
+                rating = int(rating)
+                queryset = queryset.filter(rating=rating)
+            except ValueError:
+                return Response({"error": "Invalid rating value."}, status=status.HTTP_400_BAD_REQUEST)
+
+        category = request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(category=category)
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 20
+        page = paginator.paginate_queryset(queryset, request)
+
+        serializer = UserRatingSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
