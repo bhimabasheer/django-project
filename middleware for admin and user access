@@ -1,0 +1,52 @@
+from click_for_marry.constants import ADMIN_ONLY_URLS, NO_AUTH_REQUIRED_URLS
+from django.http import JsonResponse
+from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+
+    
+class AdminAccessMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+ 
+    def __call__(self, request):
+       
+        path = request.path
+        print("Request path:", request.path)
+        print("[Middleware] Headers:", request.headers)  
+        print(request.user)
+        try:
+            jwt_auth = JWTAuthentication()
+            auth_result = jwt_auth.authenticate(request)
+            if auth_result is not None:
+                request.user, request.auth = auth_result  
+        except AuthenticationFailed:
+            pass  
+        if path in NO_AUTH_REQUIRED_URLS:
+            return self.get_response(request)
+
+        if path in ADMIN_ONLY_URLS:
+            user = request.user
+            print("Is Authenticated:", user.is_authenticated)
+            print("User:", user)
+            print(user.is_superuser)
+            if not user.is_authenticated:
+                return JsonResponse(
+                    {"success": False, "response": {}, "message": "nnnLogin required"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            if not user.is_superuser:
+                return JsonResponse(
+                    {"success": False, "response": {}, "message": "Not authorized"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+ 
+        else:
+       
+            user = request.user
+            if not user.is_authenticated:
+                return JsonResponse(
+                    {"success": False, "message": "User login required"},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+        return self.get_response(request)
