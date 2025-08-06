@@ -1,0 +1,118 @@
+from rest_framework import serializers
+from .models import Activity, NotificationHistory, NotificationSettings, NotificationType, ReadStatus, UserRating
+from django.utils import timezone
+from datetime import timedelta
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+
+class ActivitySerializer(serializers.ModelSerializer):
+    to_user = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Activity
+        fields = ['op', 'to_user', 'avatar_url', 'created_at']
+
+    def get_to_user(self, obj):
+        return obj.to.get_full_name() if obj.to else None
+
+    def get_avatar_url(self, obj):
+        return obj.to.profile_image.url if obj.to and obj.to.profile_image else None
+
+
+class NotificationHistorySerializer(serializers.ModelSerializer):
+    notification_type_display = serializers.CharField(source='get_notification_type_display', read_only=True)
+    notification_type = serializers.ChoiceField(choices=NotificationType.choices, default=NotificationType.NEW_MATCH)
+    read_status = serializers.ChoiceField(choices=ReadStatus.choices, default=ReadStatus.UNREAD)
+    is_today = serializers.SerializerMethodField()
+    is_yesterday = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NotificationHistory
+        fields = [
+            'id',
+            'notification_type',
+            'notification_type_display',
+            'message',
+            'read_status',
+            'image',
+            'action_url',
+            'created_at',
+            'updated_at',
+            'is_today',
+            'is_yesterday',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'notification_type_display', 'is_today', 'is_yesterday']
+
+    def get_is_today(self, obj):
+        return obj.created_at.date() == timezone.now().date()
+
+    def get_is_yesterday(self, obj):
+        return obj.created_at.date() == (timezone.now().date() - timedelta(days=1))
+
+    def validate_action_url(self, value):
+        """Ensure action_url is a valid relative URL if provided."""
+        if value and not value.startswith('/'):
+            raise serializers.ValidationError("Action URL must be a relative path (start with '/').")
+        return value
+
+    def validate_message(self, value):
+        """Ensure message does not exceed max length."""
+        if len(value) > 300:
+            raise serializers.ValidationError("Message cannot exceed 300 characters.")
+        return value
+
+class NotificationSettingsSerializer(serializers.ModelSerializer):
+    notification_type_display = serializers.CharField(source='get_notification_type_display', read_only=True)
+    notification_type = serializers.ChoiceField(choices=NotificationType.choices)
+    user = serializers.PrimaryKeyRelatedField(read_only=True, default=serializers.CurrentUserDefault())
+    push = serializers.ChoiceField(choices=NotificationSettings.ON_OFF_CHOICES, default=2)
+    sms = serializers.ChoiceField(choices=NotificationSettings.ON_OFF_CHOICES, default=2)
+    email = serializers.ChoiceField(choices=NotificationSettings.ON_OFF_CHOICES, default=2)
+    whatsapp = serializers.ChoiceField(choices=NotificationSettings.ON_OFF_CHOICES, default=2)
+    class Meta:
+        model = NotificationSettings
+        fields = [
+            'id',
+            'user',
+            'notification_type',
+            'notification_type_display',
+            'push',
+            'sms',
+            'email',
+            'whatsapp',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'notification_type_display']
+
+    def validate(self, data):
+        """Enforce unique_together constraint for user and notification_type."""
+        user = self.context['request'].user
+        notification_type = data.get('notification_type')
+        if self.instance is None:  # For create
+            if NotificationSettings.objects.filter(user=user, notification_type=notification_type).exists():
+                raise serializers.ValidationError(
+                    f"Notification setting for type '{notification_type}' already exists for this user."
+                )
+        return data
+
+    def create(self, validated_data):
+        """Assign the authenticated user during creation."""
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
+
+class UserRatingSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = UserRating
+        fields = ['id', 'user', 'message', 'like_most', 'rating', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+
+    def validate_rating(self, value):
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value
