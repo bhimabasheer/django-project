@@ -1,0 +1,17 @@
+DB_NAME=mydatabase_test4
+DB_USER=myuser
+DB_PASSWORD=mypassword
+DB_HOST=127.0.0.1
+DB_PORT=3306
+
+SECRET_KEY = 'django-insecure-_x&#8@-ev^(!4!+q4in6!kj5%a6fa4*u*v9-qxu=_@b$_=ga5c'
+DEBUG = True
+ 
+ACCESS_TOKEN_LIFETIME = 30
+REFRESH_TOKEN_LIFETIME = 1
+ 
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT =  465  #587 if TLS is True
+EMAIL_USE_SSL = True
+EMAIL_HOST_USER = 'beemabasheer79@gmail.com'
+EMAIL_HOST_PASSWORD = 'fvrifqvnsjufplbd'
