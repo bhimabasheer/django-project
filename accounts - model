@@ -1,0 +1,88 @@
+from django.db import models
+from django.conf import settings  # Import to refer to AUTH_USER_MODEL
+from django.utils import timezone
+from datetime import timedelta
+
+
+# Admin profile extending from Users
+class AdminUser(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='admin_profile')
+    name = models.CharField(max_length=191)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    picture = models.ImageField(upload_to='profile_images/', null=True, blank=True)
+    role = models.ForeignKey('Role', on_delete=models.SET_NULL, null=True, blank=True)
+    token = models.CharField(max_length=191, null=True, blank=True)
+    isVerified = models.BooleanField(default=False)  # Default to False
+    status = models.BooleanField(default=True)
+    remember_token = models.CharField(max_length=191, null=True, blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Admin: {self.user.email}"
+
+
+# Role model for RBAC
+class Role(models.Model):
+    name = models.CharField(max_length=125)
+    guard_name = models.CharField(max_length=125)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+# Permission model for RBAC
+class Permission(models.Model):
+    name = models.CharField(max_length=166)
+    guard_name = models.CharField(max_length=166)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+# RoleHasPermissions: To associate roles with permissions
+class RoleHasPermissions(models.Model):
+    role = models.ForeignKey(Role, on_delete=models.CASCADE)
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = ('role', 'permission')
+
+    def __str__(self):
+        return f"{self.role.name} → {self.permission.name}"
+
+
+# ModelHasRoles: To associate a model instance with roles
+class ModelHasRoles(models.Model):
+    model_type = models.CharField(max_length=125)
+    model_id = models.BigIntegerField()
+    role = models.ForeignKey(Role, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"{self.model_type} [{self.model_id}] → {self.role.name}"
+
+
+# ModelHasPermissions: To associate a model instance with permissions
+class ModelHasPermissions(models.Model):
+    model_type = models.CharField(max_length=125)
+    model_id = models.BigIntegerField()
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"{self.model_type} [{self.model_id}] → {self.permission.name}"
+
+
+class OTP(models.Model):
+    phone = models.CharField(max_length=15)
+    email = models.EmailField(null=True, blank=True)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_verified = models.BooleanField(default=False)
+
+    def is_expired(self):
+        return self.created_at + timedelta(minutes=5) < timezone.now()
