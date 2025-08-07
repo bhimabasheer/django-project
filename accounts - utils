@@ -1,0 +1,178 @@
+
+from .models import OTP
+from click_for_marry import constants as const
+from users.models import Users
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.db.models import Q
+from django.utils import timezone
+from datetime import timedelta
+from utils.helpers import Utils as CommonUtils
+from django.contrib.auth import authenticate
+from click_for_marry import constants as const
+from rest_framework import serializers
+
+class Utils:
+    
+    @staticmethod
+    def verify_otp(otp,data):
+        identifier = str(data["email"]) if data["email"] else str(data["phone"])
+        is_email = True if data["email"] else False
+        otp = str(otp)
+        query = (Q(code=otp) & (Q(email=identifier) | Q(phone=identifier)))
+        response_data = {}
+        has_error = False
+        message = const.OTP_VERIFICATION_SUCCESS
+        otp_data = OTP.objects.filter(query)
+
+        if otp_data.exists():
+            otp_data = otp_data.last()
+            if otp_data.is_verified:
+                has_error = True
+                message = const.OTP_ALREADY_VERIFIED
+            if otp_data.code != otp:
+                has_error = True
+                message = const.OTP_NOT_VALID
+            else:
+                if otp_data.is_expired():
+                    has_error = True
+                    message = const.OTP_EXPIRED
+                else:
+                    now = timezone.now()
+                    time_defference = now - otp_data.created_at
+                    if time_defference < timedelta(minutes=const.OTP_EXPIRE_MINUTES):
+                        otp_data.is_verified = True
+                        otp_data.save()
+
+                        insert_user_data = {"username" : identifier}
+                        if is_email:
+                            insert_user_data["email"] = identifier
+                        else:
+                            insert_user_data["phone"] = identifier
+                        user = Users.objects.create(**insert_user_data)
+                        
+                        refresh = RefreshToken.for_user(user)
+                        token_data = {
+                                "access_token": str(refresh.access_token),
+                                "refresh_token": str(refresh),
+                                "confetti": True
+                            }
+                        response_data["token_data"] = token_data
+                    else:
+                        has_error = True
+                        message = const.OTP_EXPIRED
+        else:
+            has_error = True
+            message = const.OTP_NOT_VALID
+        response_data["has_error"] = has_error
+        response_data["message"] = message
+        return response_data
+
+    @staticmethod
+    def get_common_login_response(user):
+        response_data= {
+            "is_premium_member" : user.user_plans.exists(),
+            "is_new_user" : not user.activity_created_user.exists()
+        }
+        return response_data
+    
+    @staticmethod
+    def get_profile_created_for_payload(request):
+        name = str(request.data.get("name"))
+        gender = request.data.get("gender")
+        profile__created_for = request.data.get("profile_for")
+        name_split = name.split(" ")
+        first_name = name_split[0] if len(name_split) > 0 else name
+        last_name = name_split[1] if len(name_split) > 1 else ""
+
+        response = {
+            "first_name" : first_name,
+            "last_name" : last_name,
+            "profile_created_for" : profile__created_for,
+            "gender" : gender,
+        }
+        return response
+    
+    @staticmethod
+    def verify_create_acccount_otp(otp,phone):
+        otp = str(otp)
+        phone = str(phone)
+        query = (Q(code=otp) & Q(phone=phone))
+        response_data = {}
+        has_error = False
+        message = const.OTP_VERIFICATION_SUCCESS
+        otp_data = OTP.objects.filter(query)
+
+        if otp_data.exists():
+            otp_data = otp_data.last()
+            if otp_data.is_verified:
+                has_error = True
+                message = const.OTP_ALREADY_VERIFIED
+            if otp_data.code != otp:
+                has_error = True
+                message = const.OTP_NOT_VALID
+            else:
+                if otp_data.is_expired():
+                    has_error = True
+                    message = const.OTP_EXPIRED
+                else:
+                    now = timezone.now()
+                    time_defference = now - otp_data.created_at
+                    if time_defference < timedelta(minutes=const.OTP_EXPIRE_MINUTES):
+                        otp_data.is_verified = True
+                        otp_data.save()
+                    else:
+                        has_error = True
+                        message = const.OTP_EXPIRED
+        else:
+            has_error = True
+            message = const.OTP_NOT_VALID
+        response_data["has_error"] = has_error
+        response_data["message"] = message
+        return response_data
+
+    @staticmethod
+    def verify_login_with_otp_code(otp,data):
+        identifier = str(data["username"])
+        otp = str(otp)
+        query = (Q(code=otp) & (Q(email=identifier) | Q(phone=identifier)))
+        response_data = {}
+        has_error = False
+        message = const.OTP_VERIFICATION_SUCCESS
+        otp_data = OTP.objects.filter(query)
+
+        if otp_data.exists():
+            otp_data = otp_data.last()
+            if otp_data.is_verified:
+                has_error = True
+                message = const.OTP_ALREADY_VERIFIED
+            if otp_data.code != otp:
+                has_error = True
+                message = const.OTP_NOT_VALID
+            else:
+                if otp_data.is_expired():
+                    has_error = True
+                    message = const.OTP_EXPIRED
+                else:
+                    now = timezone.now()
+                    time_defference = now - otp_data.created_at
+                    if time_defference < timedelta(minutes=const.OTP_EXPIRE_MINUTES):
+                        otp_data.is_verified = True
+                        otp_data.save()
+
+                        has_error = False
+                    else:
+                        has_error = True
+                        message = const.OTP_EXPIRED
+        else:
+            has_error = True
+            message = const.OTP_NOT_VALID
+        response_data["has_error"] = has_error
+        response_data["message"] = message
+        return response_data
+    
+    # @staticmethod
+    # def validate_current_password(user, password):
+    #     if not authenticate(username=user.username, password=password):
+    #         raise serializers.ValidationError({
+    #             'current_password': const.CURRENT_PASSWORD_INVALID
+    #         })
