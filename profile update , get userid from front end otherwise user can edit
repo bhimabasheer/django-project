@@ -1,0 +1,29 @@
+class ProfileUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, *args, **kwargs):
+        try:
+            target_user_id = request.data.get("user_id", request.user.id)
+
+            user = Users.objects.filter(id=target_user_id).first()
+            if not user:
+                return Response(
+                    error_(message="User not found"),
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            serializer = ProfileUpdateSerializer(user, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)  
+            serializer.save()
+
+            return Response(
+                success_(response={}, message="User Profile Updated Successfully"),
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            import traceback
+            return Response(
+                error_(message=str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
