@@ -1,0 +1,710 @@
+view 
+from datetime import timezone
+from rest_framework import status
+from rest_framework.generics import ListAPIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from admin_panel.profile_reporting.serializers import (UserReportListSerializer,ReportedProfileSerializer)
+from admin_panel.utils import AdminUtils
+from users.models import ProfileReports
+from utils.api_response import success_, error_
+from click_for_marry import constants as const
+from utils.helpers import Utils as CommonUtils
+from rest_framework import status
+from rest_framework.permissions import IsAdminUser
+from rest_framework.views import APIView
+from django.db.models import Q
+from django.utils import timezone
+from users.models import Users
+
+class UserReportListView(ListAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated,IsAdminUser]
+    serializer_class = UserReportListSerializer
+
+    def get_queryset(self):
+        try:
+            queryset = AdminUtils.get_reported_users_queryset(self.request)
+            return queryset
+        except Exception as e:
+            print(f"Error in get_queryset: {e}")
+            return ProfileReports.objects.none()
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        params = self.request.query_params
+        page = params.get("page", const.PAGE)
+        limit = params.get("limit", const.LIMIT)
+
+        pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+
+        data = pagination["queryset"]
+        serializer = self.get_serializer(data, many=True, context={"request": request})
+
+        pagination_details = {
+            "page": int(page) if page else None,
+            "limit": int(limit) if limit else None,
+            "count": queryset.count()
+        }
+        
+        response_data = {
+            "report_data": serializer.data,
+            "pagination_details": pagination_details,
+        }
+        return Response(success_(response=response_data), status=status.HTTP_200_OK)
+    
+
+        return Response(success_(response=response_data), status=status.HTTP_200_OK)
+
+
+class ReportedProfilesListView(ListAPIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated,IsAdminUser]
+    serializer_class = ReportedProfileSerializer
+
+    def get_queryset(self):
+        
+        queryset = AdminUtils.get_reported_profiles_queryset(self.request)
+        return queryset
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        params = self.request.query_params
+        page = params.get("page", const.PAGE)
+        limit = params.get("limit", const.LIMIT)
+
+        pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+
+        data = pagination["queryset"]
+        serializer = self.get_serializer(data, many=True, context={"request": request})
+
+        pagination_details = {
+            "page": int(page) if page else None,
+            "limit": int(limit) if limit else None,
+            "count": queryset.count()
+        }
+        
+        response_data = {
+            "report_data": serializer.data,
+            "pagination_details": pagination_details,
+        }
+        return Response(success_(response=response_data), status=status.HTTP_200_OK)
+    
+class ProfileReportDeleteView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def delete(self, request):
+        try:
+            request_data = request.data
+            report_id = request_data.get("report_id")
+            admin_remark = request_data.get("admin_remark",None)
+            
+            profile_report_data = ProfileReports.objects.filter(id=report_id,is_deleted=False,status=ProfileReports.StatusChoices.REPORTED)
+            if not profile_report_data.exists():
+                return Response(error_(message=const.INVALID_REPORT),status=status.HTTP_200_OK)
+            
+            profile_report_data.update(
+                status=ProfileReports.StatusChoices.DELETED,admin_remarks=admin_remark
+            )
+            
+            return Response(success_(response={},message=const.REPORT_DELETED), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
+
+class ReportApproveView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    
+    def post(self, request):
+        try:
+            request_data = request.data
+            report_id = request_data.get("report_id")
+            admin_remark = request_data.get("admin_remark",None)
+            
+            profile_report_data = ProfileReports.objects.filter(id=report_id,is_deleted=False,status=ProfileReports.StatusChoices.REPORTED).\
+                                    select_related('to_user')
+            if not profile_report_data.exists():
+                return Response(error_(message=const.INVALID_REPORT),status=status.HTTP_200_OK)
+            
+            profile_report_data.update(
+                status=ProfileReports.StatusChoices.APPROVED,admin_remarks=admin_remark
+            )
+            Users.objects.filter(id=profile_report_data.last().to_user.id).update(status=Users.Status_Choices.BLOCKED)
+            
+            return Response(success_(response={},message=const.REPORT_DELETED), status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e)),status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+      seerrilizer 
+
+      
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from users.models import ProfileReports
+
+User = get_user_model()
+class UserReportListSerializer(serializers.ModelSerializer):
+    from_user_name = serializers.CharField(source='reported_user_fullname')
+    aec_id = serializers.CharField(source='from_user.aec_id')
+    from_user_mobile = serializers.SerializerMethodField()
+    to_user_name = serializers.CharField(source='target_user_fullname')
+    reported_time = serializers.DateTimeField(source='created_at', format='%d-%m-%Y %I:%M %p')
+    status = serializers.SerializerMethodField()
+    reason = serializers.CharField()
+    class Meta:
+        model = ProfileReports
+        fields = [
+            'id',
+            'from_user_name',
+            'aec_id',
+            'from_user_mobile',
+            'reported_time',
+            'reason',
+            'to_user_name',
+            'status'            
+        ]
+
+    def get_from_user_mobile(self, obj):
+        return obj.from_user.phone if hasattr(obj.from_user, 'phone') else ''
+    
+    def get_to_user_name(self, obj):
+        return obj.to_user.get_full_name()
+
+    def get_status(self, obj):
+        return obj.get_status_display()
+    
+class ReportedProfileSerializer(serializers.ModelSerializer):
+    aec_id = serializers.CharField(source='to_user.aec_id')
+    reported_time = serializers.DateTimeField(source='created_at', format='%d-%m-%Y %I:%M %p')
+    username = serializers.CharField(source='target_user_fullname')
+    reason = serializers.CharField()
+    admin_remark = serializers.CharField(source='admin_remarks')
+    status_display = serializers.CharField(source='get_status_display')
+
+    class Meta:
+        model = ProfileReports
+        fields = [
+            'aec_id',
+            'reported_time',
+            'reason',
+            'username',
+            'admin_remark',
+            'status_display'
+        ]
+
+
+
+
+  utils
+
+
+
+
+  from rest_framework import status
+from rest_framework.response import Response
+
+from users.models import Users, ProfileReports
+from django.db.models import Value, CharField, Q, F
+from users.models import Users, AccountVerify
+from django.db.models.functions import Concat
+from click_for_marry import constants as const
+from utils.api_response import success_, error_
+from utils.helpers import Utils as CommonUtils
+
+class AdminUtils:
+    @staticmethod
+    def get_admin_user_object(user_id):
+        """
+        Get user details using user_id
+        """
+        return (
+            Users.objects.select_related(
+                "gender",
+                "language",
+                "mother_tongue",
+                "country",
+                "religion",
+                "sub_religion",
+                "district",
+                "town",
+                "permanent_district",
+                "living_town",
+                "qualification",
+                "course",
+                "sector",
+                "occupation",
+                "annual_income",
+                "blood_group",
+                "complexion",
+                "body_type",
+                "physical_status",
+            )
+            .prefetch_related("albums")
+            .get(id=user_id)
+        )
+
+    @staticmethod
+    def get_admin_user_list_queryset(request):
+        """
+        Get queryset for user list in admin panel
+        """
+        queryset = (
+            Users.objects.prefetch_related("current_location", "user_plan")
+            .exclude(is_superuser=True)
+            .order_by("-id")
+        )
+        params = request.query_params
+
+        user_id = params.get("user_id")
+        if user_id:
+            queryset = queryset.filter(id=user_id)
+        aec_id = params.get("aec_id")
+        if aec_id:
+            queryset = queryset.filter(aec_id__icontains=aec_id)
+        phone = params.get("phone")
+        if phone:
+            queryset = queryset.filter(phone__contains=phone)
+        name = params.get("name")
+        # if name:
+        #     cleaned_name = name.replace(" ", "").lower()
+        #     queryset = queryset.annotate(
+        #         full_name=Concat(
+        #             'first_name',
+        #             Value(''),
+        #             'last_name',
+        #             output_field=CharField()
+        #         )
+        #     ).filter(
+        #         Q(first_name__icontains=cleaned_name) |
+        #         Q(last_name__icontains=cleaned_name) |
+        #         Q(full_name__icontains=cleaned_name)
+        #     )
+        if name:
+            words = name.strip().lower().split()
+            queryset = queryset.annotate(
+                full_name=Concat(
+                    "first_name", Value(" "), "last_name", output_field=CharField()
+                )
+            )
+            q_object = Q()
+            for word in words:
+                q_object &= (
+                    Q(first_name__icontains=word)
+                    | Q(last_name__icontains=word)
+                    | Q(full_name__icontains=word)
+                )
+
+            queryset = queryset.filter(q_object)
+        age = params.get("age")
+        if age:
+            queryset = queryset.filter(age=age)
+        location = params.get("location")
+        if location:
+            queryset = queryset.filter(current_location_id=location)
+        plan_id = params.get("plan_id")
+        if plan_id:
+            queryset = queryset.filter(user_plan=plan_id)
+        created_on = params.get("created_on")
+        if created_on:
+            queryset = queryset.filter(created_at__date=created_on)
+        user_status = params.get("status")
+        if user_status:
+            queryset = queryset.filter(status=user_status)
+        return queryset
+
+    @staticmethod
+    def get_paginated_list_response(request, queryset, serializer_class, success_message):
+        """
+        Common pagination logic for profile verification list views
+        """
+        try:
+            page = request.GET.get('page', const.PAGE)
+            limit = request.GET.get('limit', const.LIMIT)
+
+            pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+            data = pagination["queryset"]
+            serializer = serializer_class(data, many=True)
+
+            pagination_details = {
+                "page": page,
+                "limit": limit,
+                "count": queryset.count()
+            }
+
+            response = {
+                "request_list": serializer.data,
+                "pagination_details": pagination_details
+            }
+
+            return Response(
+                success_(response=response, message=success_message),
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(error_(message=str(e)), status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def get_profile_verification_queryset(request, base_queryset=None):
+        """
+        Query Parameters:
+        - verification_type: Filter by verification type
+        - is_verified: Boolean ('true'/'false') - true for verified users, false for unverified users
+        - verification_status: Filter by specific status value
+        - name: Search by user's first name, last name, or full name
+        - aec_id: Filter by user's AEC ID (contains)
+        - user_status: Filter by user status
+        - doc_type: Filter by document type
+        """
+
+        if base_queryset is None:
+            queryset = AccountVerify.objects.select_related('user')
+        else:
+            queryset = base_queryset
+
+        params = request.query_params
+
+        verification_type = params.get('verification_type')
+        if verification_type:
+            queryset = queryset.filter(verification_type=verification_type)
+
+        is_verified = params.get('is_verified')
+        if is_verified is not None:
+            if is_verified.lower() == 'true':
+                queryset = queryset.filter(status=AccountVerify.STATUS_CHOICES.APPROVED)
+            elif is_verified.lower() == 'false':
+                queryset = queryset.filter(status__in=[
+                    AccountVerify.STATUS_CHOICES.PENDING,
+                    AccountVerify.STATUS_CHOICES.REJECTED
+                ])
+
+        verification_status = params.get('verification_status')
+        if verification_status:
+            queryset = queryset.filter(status=verification_status)
+
+        aec_id = params.get('aec_id')
+        if aec_id:
+            queryset = queryset.filter(user__aec_id__icontains=aec_id)
+
+        name = params.get('name')
+        if name:
+            words = name.strip().split()
+            queryset = queryset.annotate(
+                full_name=Concat(
+                    'user__first_name',
+                    Value(' '),
+                    'user__last_name',
+                    output_field=CharField()
+                )
+            )
+            q_object = Q()
+            for word in words:
+                q_object &= (
+                        Q(user__first_name__icontains=word) |
+                        Q(user__last_name__icontains=word) |
+                        Q(full_name__icontains=word)
+                )
+            queryset = queryset.filter(q_object)
+
+        user_status = params.get('user_status')
+        if user_status:
+            queryset = queryset.filter(user__status=user_status)
+
+        doc_type = params.get('doc_type')
+        if doc_type:
+            queryset = queryset.filter(doc_type=doc_type)
+
+        return queryset
+    
+    @staticmethod
+    def get_assigned_phy_verification_requests_query(request):
+        status = request.GET.get("status",None)
+        request_id_search_query = request.GET.get("request_id_search_query",None)
+        user_id_search_query = request.GET.get("user_id_search_query",None)
+        user_name_search_query = request.GET.get("user_name_search_query",None)
+        location_search_query = request.GET.get("location_search_query",None)
+        assigned_to_search_query = request.GET.get("assigned_to_search_query",None)
+        status_search_query = request.GET.get("status_search_query",None)
+        query_filter = Q()
+
+        assigned_requests = AccountVerify.objects.filter(assign_to__isnull=False).select_related('user','assign_to')
+        if status:
+            assigned_requests = assigned_requests.filter(status=status)
+
+        assigned_requests = assigned_requests.annotate(\
+            user_full_name=Concat(F('user__first_name'),Value(' '),F('user__last_name')),
+            assigned_user_full_name=Concat(F('assign_to__user__first_name'),Value(' '),F('assign_to__user__last_name')))
+
+        if request_id_search_query:
+            query_filter &= Q(request_id__icontains=request_id_search_query)
+        
+        if user_id_search_query:
+            query_filter &= Q(user__aec_id__icontains=user_id_search_query)
+        
+        if user_name_search_query:
+            query_filter &= Q(user_full_name__icontains=user_name_search_query)
+        
+        if location_search_query:
+            query_filter &= Q(user__place__name__icontains=location_search_query)
+        
+        if assigned_to_search_query:
+            query_filter &= Q(assigned_user_full_name__icontains=assigned_to_search_query)
+        
+        if status_search_query:
+            query_filter &= Q(status=status_search_query)
+        
+        return assigned_requests.filter(query_filter)
+
+
+    @staticmethod
+    def get_paginated_list_response(request, queryset, serializer_class, success_message):
+        """
+        Common pagination logic for profile verification list views
+        """
+        try:
+            page = request.GET.get('page', const.PAGE)
+            limit = request.GET.get('limit', const.LIMIT)
+
+            pagination = CommonUtils.pagination(queryset=queryset, page=page, limit=limit)
+            data = pagination["queryset"]
+            serializer = serializer_class(data, many=True)
+
+            pagination_details = {
+                "page": page,
+                "limit": limit,
+                "count": queryset.count()
+            }
+
+            response = {
+                "request_list": serializer.data,
+                "pagination_details": pagination_details
+            }
+
+            return Response(
+                success_(response=response, message=success_message),
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(error_(message=str(e)), status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def get_profile_verification_queryset(request, base_queryset=None):
+        """
+        Query Parameters:
+        - verification_type: Filter by verification type
+        - is_verified: Boolean ('true'/'false') - true for verified users, false for unverified users
+        - verification_status: Filter by specific status value
+        - name: Search by user's first name, last name, or full name
+        - aec_id: Filter by user's AEC ID (contains)
+        - user_status: Filter by user status
+        - doc_type: Filter by document type
+        """
+
+        if base_queryset is None:
+            queryset = AccountVerify.objects.select_related('user')
+        else:
+            queryset = base_queryset
+
+        params = request.query_params
+
+        verification_type = params.get('verification_type')
+        if verification_type:
+            queryset = queryset.filter(verification_type=verification_type)
+
+        is_verified = params.get('is_verified')
+        if is_verified is not None:
+            if is_verified.lower() == 'true':
+                queryset = queryset.filter(status=AccountVerify.STATUS_CHOICES.APPROVED)
+            elif is_verified.lower() == 'false':
+                queryset = queryset.filter(status__in=[
+                    AccountVerify.STATUS_CHOICES.PENDING,
+                    AccountVerify.STATUS_CHOICES.REJECTED
+                ])
+
+        verification_status = params.get('verification_status')
+        if verification_status:
+            queryset = queryset.filter(status=verification_status)
+
+        aec_id = params.get('aec_id')
+        if aec_id:
+            queryset = queryset.filter(user__aec_id__icontains=aec_id)
+
+        name = params.get('name')
+        if name:
+            words = name.strip().split()
+            queryset = queryset.annotate(
+                full_name=Concat(
+                    'user__first_name',
+                    Value(' '),
+                    'user__last_name',
+                    output_field=CharField()
+                )
+            )
+            q_object = Q()
+            for word in words:
+                q_object &= (
+                        Q(user__first_name__icontains=word) |
+                        Q(user__last_name__icontains=word) |
+                        Q(full_name__icontains=word)
+                )
+            queryset = queryset.filter(q_object)
+
+        user_status = params.get('user_status')
+        if user_status:
+            queryset = queryset.filter(user__status=user_status)
+
+        doc_type = params.get('doc_type')
+        if doc_type:
+            queryset = queryset.filter(doc_type=doc_type)
+
+        return queryset
+    
+    @staticmethod
+    def get_assigned_phy_verification_requests_query(request):
+        status = request.GET.get("status",None)
+        request_id_search_query = request.GET.get("request_id_search_query",None)
+        user_id_search_query = request.GET.get("user_id_search_query",None)
+        user_name_search_query = request.GET.get("user_name_search_query",None)
+        location_search_query = request.GET.get("location_search_query",None)
+        assigned_to_search_query = request.GET.get("assigned_to_search_query",None)
+        status_search_query = request.GET.get("status_search_query",None)
+        query_filter = Q()
+
+        assigned_requests = AccountVerify.objects.filter(assign_to__isnull=False).select_related('user','assign_to')
+        if status:
+            assigned_requests = assigned_requests.filter(status=status)
+
+        assigned_requests = assigned_requests.annotate(\
+            user_full_name=Concat(F('user__first_name'),Value(' '),F('user__last_name')),
+            assigned_user_full_name=Concat(F('assign_to__user__first_name'),Value(' '),F('assign_to__user__last_name')))
+
+        if request_id_search_query:
+            query_filter &= Q(request_id__icontains=request_id_search_query)
+        
+        if user_id_search_query:
+            query_filter &= Q(user__aec_id__icontains=user_id_search_query)
+        
+        if user_name_search_query:
+            query_filter &= Q(user_full_name__icontains=user_name_search_query)
+        
+        if location_search_query:
+            query_filter &= Q(user__place__name__icontains=location_search_query)
+        
+        if assigned_to_search_query:
+            query_filter &= Q(assigned_user_full_name__icontains=assigned_to_search_query)
+        
+        if status_search_query:
+            query_filter &= Q(status=status_search_query)
+        
+        return assigned_requests.filter(query_filter)
+
+
+
+    @staticmethod
+    def get_reported_users_queryset(request):
+        """
+        Get queryset for reported users list with enhanced name search
+        """
+        filter_query= Q()
+        queryset = (
+            ProfileReports.objects.select_related('from_user', 'to_user')
+            .filter(is_deleted=False,status=ProfileReports.StatusChoices.REPORTED)
+            .order_by('-created_at').annotate(
+                reported_user_fullname=Concat(
+                    "from_user__first_name",
+                    Value(" "),
+                    "from_user__last_name",
+                    output_field=CharField()
+                ),
+                target_user_fullname=Concat(
+                    "to_user__first_name",
+                    Value(" "),
+                    "to_user__last_name",
+                    output_field=CharField()
+                )
+            )
+        )
+        params = request.query_params
+
+        name_search_query = params.get("name_search_query")
+        if name_search_query:
+            filter_query &= (Q(reported_user_fullname__icontains=name_search_query)| \
+                             Q(target_user_fullname__icontains=name_search_query)) | \
+                             Q(from_user__aec_id__icontains=name_search_query)
+
+        mobile_search_query = params.get("mobile_search_query")
+        if mobile_search_query:
+            filter_query &= Q(from_user__phone__contains=mobile_search_query)
+
+        reported_date_search_query = params.get("date_search_query")
+        if reported_date_search_query:
+            filter_query &= Q(created_at__date=reported_date_search_query)
+
+        status_search_query = params.get("status_search_query")
+        if status_search_query:
+            filter_query &= Q(status=status_search_query)
+        
+        reason_search_query = params.get("reason_search_query")
+        if reason_search_query:
+            filter_query &= Q(reason__icontains=reason_search_query)
+        
+        queryset = queryset.filter(filter_query)
+
+        return queryset
+    
+    @staticmethod
+    def get_reported_profiles_queryset(request):
+        """
+        Get filtered queryset for reported profiles with enhanced search
+        """
+        queryset = (
+            ProfileReports.objects.select_related('from_user', 'to_user')
+            .filter(is_deleted=False,status=ProfileReports.StatusChoices.APPROVED)
+            .order_by('-created_at')
+            .annotate(
+                target_user_fullname=Concat(
+                    "to_user__first_name",
+                    Value(" "),
+                    "to_user__last_name",
+                    output_field=CharField()
+                )
+            
+            )
+        )
+        
+        params = request.query_params
+        filter_query = Q()
+
+        username_search_query = params.get("username_search_query")
+        if username_search_query:
+            filter_query &= Q(target_user_fullname__icontains=username_search_query.strip())
+
+        aec_id_search_query = params.get("aec_id_search_query")
+        if aec_id_search_query:
+            filter_query &= Q(to_user__aec_id__icontains=aec_id_search_query.strip())
+
+        date_search_query = params.get("date_search_query")
+        if date_search_query:
+            filter_query &= Q(created_at__date=date_search_query)
+
+        status_search_query = params.get("status_search_query")
+        if status_search_query:
+            filter_query &= Q(status=status_search_query)
+        
+        reason_search_query = params.get("reason_search_query")
+        if reason_search_query:
+            filter_query &= Q(reason__icontains=reason_search_query)
+        
+        admin_remark_search_query = params.get("admin_remark_search_query")
+        if admin_remark_search_query:
+            filter_query &= Q(admin_remarks__icontains=admin_remark_search_query)
+
+        if filter_query:
+            queryset = queryset.filter(filter_query)
+
+        return queryset
+        
