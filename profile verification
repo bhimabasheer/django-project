@@ -1,0 +1,385 @@
+from rest_framework import status
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from admin_panel.profile_verification.serializers import (ProfileVerificationSerializer, \
+    ProfileVerificationDetailSerializer, ProfileVerifiedUserSerializer, ProfileVerificationIDLogSerializer,
+    AssignedPhyVerifcationListSerializer)
+from admin_panel.utils import AdminUtils
+from utils.api_response import success_, error_
+from users.models import AccountVerify
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from click_for_marry import constants as const
+from utils.helpers import Utils as CommonUtils
+from rest_framework.views import APIView
+from accounts.models import AdminUser
+from datetime import datetime
+
+
+class AdminProfileVerificationRequestListView(ListAPIView):
+    """
+    GET /api/admin_panel/profile-verification/list/
+    QueryParams:
+    - verification_type (required) [1,2]
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ProfileVerificationSerializer
+
+    def get_queryset(self):
+        params = self.request.query_params
+
+        verification_type = params.get('verification_type')
+        if not verification_type:
+            raise ValueError("`verification_type` is required as a query parameter.")
+
+        base_queryset = AccountVerify.objects.filter(
+            status=AccountVerify.STATUS_CHOICES.PENDING
+        ).select_related('user')
+
+        return AdminUtils.get_profile_verification_queryset(self.request, base_queryset)
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            return AdminUtils.get_paginated_list_response(
+                request, queryset, self.serializer_class, "Profile Verification Request List"
+            )
+        except Exception as e:
+            return Response(error_(message=str(e)), status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminProfileVerificationRequestDetailView(RetrieveAPIView):
+    """
+    GET /api/admin_panel/profile-verification/{pk}
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ProfileVerificationDetailSerializer
+    queryset = AccountVerify.objects.select_related('user').all()
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(success_(response=serializer.data, message="Profile verification detail"), status=status.HTTP_200_OK)
+
+
+class AdminProfileVerificationVerifiedUserView(ListAPIView):
+    """
+    GET /api/admin_panel/profile-verification/verified-user/
+    QueryParams:
+    - is_verified (required) [true/false]
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ProfileVerifiedUserSerializer
+
+    def get_queryset(self):
+        params = self.request.query_params
+
+        is_verified = params.get('is_verified')
+        if is_verified is None:
+            raise ValueError("`is_verified` is required as a boolean parameter.")
+
+        if is_verified.lower() not in ['true', 'false']:
+            raise ValueError("`is_verified` must be 'true' or 'false'.")
+
+        return AdminUtils.get_profile_verification_queryset(self.request)
+
+    def list(self, request, *args, **kwargs):
+        try:
+            queryset = self.get_queryset()
+            return AdminUtils.get_paginated_list_response(
+                request, queryset, self.serializer_class, "Verified User List"
+            )
+        except Exception as e:
+            return Response(error_(message=str(e)), status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdminProfileVerificationIDLogView(ListAPIView):
+    """
+    GET /api/admin_panel/profile-verification/id-logs/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ProfileVerificationIDLogSerializer
+
+    def get_queryset(self):
+        return AdminUtils.get_profile_verification_queryset(self.request)
+
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        return AdminUtils.get_paginated_list_response(
+            request, queryset, self.serializer_class, "ID Logs List"
+        )
+    
+class DeleteIDVerification(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        try:
+            request_id = request.data.get("request_id",None)
+            id_verfication_data = AccountVerify.objects.filter(id=request_id)
+            if not id_verfication_data.exists():
+                return Response(error_(message=const.INVALID_REQUEST),status=status.HTTP_200_OK)
+            
+            id_verfication_data.update(is_deleted=True)
+
+            return Response(success_(message=const.DELETED_VERIFICATION_REQUEST),status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+class IDVerificationStatusUpdate(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        try:
+            request_data = request.data
+            request_id = request_data.get("request_id",None)
+            status = request_data.get("status",None) #2-Approve 3-Reject
+            reject_reason = request_data.get("reject_reason",None)
+
+            id_verfication_data = AccountVerify.objects.filter(id=request_id)
+            message = "Approved"
+            if not id_verfication_data.exists():
+                return Response(error_(message=const.INVALID_REQUEST),status=status.HTTP_200_OK)
+            
+            update_query = {"status" : status}
+            if reject_reason and status == AccountVerify.STATUS_CHOICES.REJECTED:
+                message = "Rejected"
+                update_query["reason"] = reject_reason
+
+            id_verfication_data.update(**update_query)
+
+            message = f"Sucessfully {message} verification request."
+            return Response(success_(message=message),status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+class AssignPhyVerificationRequest(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        try:
+            request_data = request.data
+            request_id = request_data.get("request_id",None)
+            assign_to = request_data.get("assign_to",None) #2-Approve 3-Reject
+
+            if not AdminUser.objects.filter(id=assign_to).exists():
+                return Response(error_(message=const.INVALID_VERIFICATION_ASSIGNED_USER),status=status.HTTP_200_OK)
+            
+            assigned_user = AdminUser.objects.filter(id=assign_to).select_related('user').last()
+
+            id_verfication_data = AccountVerify.objects.filter(id=request_id)
+            if not id_verfication_data.exists():
+                return Response(error_(message=const.INVALID_REQUEST),status=status.HTTP_200_OK)
+
+            id_verfication_data.update(assign_to=assigned_user,assigned_date=datetime.now())
+            message = f"Sucessfully assigned request to {assigned_user.user.first_name} {assigned_user.user.last_name}."
+            return Response(success_(message=message),status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+class AssignedPhyVerificationRequests(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self,request):
+        try:
+            status = request.GET.get("status",None) #1-Pending 2-Approved 3-rejected
+            page = request.GET.get("page",const.PAGE)
+            limit = request.GET.get("page",const.LIMIT)
+
+            assigned_requests = AdminUtils.get_assigned_phy_verification_requests_query(request)
+
+            count = assigned_requests.count()
+            pagination = CommonUtils.pagination(queryset=assigned_requests,page=page,limit=limit)
+
+            serializer = AssignedPhyVerifcationListSerializer(pagination["queryset"],many=True)
+
+            pagination_details = {
+                "page" : page,
+                "limit" : limit,
+                "count" : count
+            }
+            response_data = {
+                "pagination_details": pagination_details,
+                "assigned_requests" : serializer.data
+            }
+            return Response(success_(response=response_data),status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+class PhyVerificationStatusUpdate(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self,request):
+        try:
+            request_data = request.data
+            request_id = request_data.get("request_id",None)
+            status = request_data.get("status",None) #2-Approve 3-Reject
+            reject_reason = request_data.get("reject_reason",None)
+
+            phy_verfication_data = AccountVerify.objects.filter(id=request_id)
+            message = "Approved"
+            if not phy_verfication_data.exists():
+                return Response(error_(message=const.INVALID_REQUEST),status=status.HTTP_200_OK)
+            
+            update_query = {"status" : status}
+            if reject_reason and status == AccountVerify.STATUS_CHOICES.REJECTED:
+                message = "Rejected"
+                update_query["reason"] = reject_reason
+
+            phy_verfication_data.update(**update_query)
+
+            message = f"Sucessfully {message} verification request."
+            return Response(success_(message=message),status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(error_(message = str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+serilizers
+
+from rest_framework import serializers
+from users.utils import Utils as UserUtils
+from users.models import AccountVerify
+
+
+class ProfileVerificationSerializer(serializers.ModelSerializer):
+    requested_on = serializers.DateTimeField(source='created_at', format='%d-%m-%Y %H:%M:%S', read_only=True)
+    aec_id = serializers.CharField(source='user.aec_id', read_only=True)
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    verification_type_text = serializers.CharField(source='get_verification_type_display', read_only=True)
+
+    class Meta:
+        model = AccountVerify
+        fields = [
+            'id',
+            'requested_on',
+            'aec_id',
+            'full_name',
+            'verification_type',
+            'verification_type_text',
+        ]
+
+class ProfileVerificationDetailSerializer(serializers.ModelSerializer):
+    aec_id = serializers.CharField(source='user.aec_id', read_only=True)
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    verification_type_text = serializers.CharField(source='get_verification_type_display', read_only=True)
+    date_of_birth = serializers.DateTimeField(source='dob', format='%d-%m-%Y', read_only=True)
+    father_name = serializers.CharField(source='user.father_name', read_only=True)
+    district = serializers.CharField(source='user.district.district', read_only=True)
+    address = serializers.CharField(source='user.address', read_only=True)
+    town = serializers.CharField(source='user.town.name', read_only=True)
+    state = serializers.CharField(source='user.district.state', read_only=True)
+    pin = serializers.CharField(source='user.pin', read_only=True)
+    profile_image = serializers.ImageField(source='user.profile_image', read_only=True)
+
+    class Meta:
+        model = AccountVerify
+        fields = [
+            'id',
+            'aec_id',
+            'full_name',
+            'first_name',
+            'last_name',
+            'profile_image',
+            'date_of_birth',
+            'verification_type',
+            'verification_type_text',
+            'unique_verification_code',
+            'doc_type',
+            'file',
+            'father_name',
+            'district',
+            'address',
+            'town',
+            'state',
+            'pin',
+        ]
+
+class ProfileVerifiedUserSerializer(serializers.ModelSerializer):
+    requested_on = serializers.DateTimeField(source='created_at', format='%d-%m-%Y %H:%M:%S', read_only=True)
+    aec_id = serializers.CharField(source='user.aec_id', read_only=True)
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    verification_type_text = serializers.CharField(source='get_verification_type_display', read_only=True)
+    profile_completion_percentage = serializers.SerializerMethodField()
+    user_id = serializers.CharField(source='user.id', read_only=True)
+    status = serializers.CharField(source='user.status', read_only=True)
+    status_text = serializers.CharField(source='user.get_status_display', read_only=True)
+
+    class Meta:
+        model = AccountVerify
+        fields = [
+            'id',
+            'user_id',
+            'requested_on',
+            'aec_id',
+            'full_name',
+            'verification_type',
+            'verification_type_text',
+            'profile_completion_percentage',
+            'status',
+            'status_text',
+        ]
+
+    def get_profile_completion_percentage(self, obj):
+        return UserUtils.calculate_profile_completion(obj.user)['profile_completion_percent']
+
+class ProfileVerificationIDLogSerializer(ProfileVerifiedUserSerializer):
+    doc_type_text = serializers.CharField(source='get_doc_type_display', read_only=True)
+    created_at = serializers.DateTimeField(format='%d-%m-%Y %H:%M:%S', read_only=True)
+    updated_at = serializers.DateTimeField(format='%d-%m-%Y %H:%M:%S', read_only=True)
+    class Meta:
+        model = AccountVerify
+        fields = ProfileVerifiedUserSerializer.Meta.fields + [
+            'file',
+            'reason',
+            'done_by',
+            'doc_type',
+            'doc_type_text',
+            'created_at',
+            'updated_at',
+        ]
+class AssignedPhyVerifcationListSerializer(serializers.ModelSerializer):
+    user_id = serializers.CharField(source='user.aec_id', read_only=True)
+    user_name = serializers.CharField(source='user_full_name', read_only=True)
+    location = serializers.CharField(source='user.place.name', read_only=True)
+    assigned_date = serializers.DateTimeField()
+    assigned_to = serializers.CharField(source='assigned_user_full_name', read_only=True)
+
+    class Meta:
+        model = AccountVerify
+        fields = [
+            'id',
+            'request_id',
+            'user_id',
+            'user_name',
+            'location',
+            'assigned_date',
+            'assigned_to',
+            'status',
+        ]
+
+    def get_profile_completion_percentage(self, obj):
+        return UserUtils.calculate_profile_completion(obj.user)['profile_completion_percent']
+
+
+
+same as utils of profile reporting ok
