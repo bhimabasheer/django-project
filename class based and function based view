@@ -1,0 +1,11 @@
+    @api_view(['POST'])
+    @permission_classes([IsAdminUser])
+    def run_expire_plans(request):
+        from common.tasks import expire_user_plans_task
+        expire_user_plans_task.delay()
+        return Response({"status": "task triggered"})
+    @action(detail=False, methods=['POST'], permission_classes=[IsAdminUser], url_path='run-expire-plans')
+    def run_expire_plans(self, request):
+        from subscriptions.tasks import expire_user_plans_task
+        expire_user_plans_task.delay()
+        return Response({"status": "task triggered"})
