@@ -1,0 +1,81 @@
+SSH to your server using username and password
+sudo apt update && sudo apt upgrade -y
+sudo apt install python3-pip python3-dev libpq-dev nginx curl git -y
+sudo apt install python3-virtualenv
+Create a folder for backend projects in /home/ubuntu
+Clone you repository into the new folder
+Install mysql dependencies
+sudo apt-get update
+sudo apt-get install -y default-libmysqlclient-dev build-essential pkg-config python3-dev
+Set up database
+sudo apt update
+sudo apt install mysql-server -y
+sudo mysql_secure_installation (secure mysql installation) and give yes for all responses
+Access mysql shell (mysql -u root -p)  Give a strong password and store it safe
+CREATE DATABASE your_database_name; (Create a database)
+CREATE USER 'your_user'@'localhost' IDENTIFIED BY 'your_password';(Replace your_user and your_password with your required username and password)
+GRANT ALL PRIVILEGES ON your_database_name.* TO 'your_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT; (Exit the mysql shell)
+Install virtual environment and activate it
+Add your server address in allowed host
+pip install django gunicorn and install other requirements in txt file
+Create env file and add necessary values (sudo nano .env)
+Migrate all migration files
+Collect static files (python manage.py collectstatic)
+Create a systemd service (sudo nano /etc/systemd/system/{project_name}.service) and paste the below contents
+[Unit]
+Description=gunicorn daemon for Django {project_name}
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory= {project_directory}(eg : /home/ubuntu/backend-projects/click4marry-backend)
+ExecStart=/{project_directory}/venv/bin/gunicorn \
+    --workers 3 \
+    --bind 127.0.0.1:8000 \
+    {project_name}.wsgi:application
+Environment="DJANGO_SETTINGS_MODULE={project_name}.settings"
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+Start and enable gunicorn
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl start gunicorn
+sudo systemctl enable gunicorn
+Create nginx config (sudo nano /etc/nginx/sites-available/{project_name}) and paste the following contents
+server {
+    listen 80;
+    server_name {domain name or ip address};
+
+    access_log /var/log/nginx/{project_name}_access.log;
+    error_log /var/log/nginx/{project_name}_error.log;
+
+    location /static/ {
+        alias /home/ubuntu/backend-projects/{project_name}/static/;
+    }
+
+    location /media/ {
+        alias /home/ubuntu/backend-projects/{project_name}/media/;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+Create system link sudo ln -s /etc/nginx/sites-available/{nginx config file name} /etc/nginx/sites-enabled/
+Test configuration and restart
+sudo nginx -t
+sudo systemctl restart nginx
+* Replace everything in curly braces according to you requirement
+* This document is for hosting applications using ip address not domain name
+* Since domain name was not available during the creation of this document for a project, setup for adding  ssl configuration is not added
