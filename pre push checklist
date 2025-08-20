@@ -1,0 +1,88 @@
+1. Pull Latest Changes
+
+· Always pull the latest changes before pushing:
+
+2. Use Proper Branch Names
+
+· Follow this naming convention:
+
+Feature feature/checkout-promo-code
+
+Bugfix bugfix/login-crash-fix
+
+Hotfix hotfix/payment-timeout
+
+Chore chore/update-dependencies
+
+
+3. Check for Unnecessary Files
+
+· Don’t commit: .pyc, .log, .DS_Store, .env, .history/, etc.
+
+· Ensure .gitignore is properly respected.
+
+4. Write Clear Commit Messages
+
+Follow this format:
+
+<type>: <short summary> [optional body]
+
+Example:
+
+· feat – New feature
+
+· fix – Bug fix
+
+· refactor – Code refactoring (no feature or bug fix)
+
+· docs – Documentation change
+
+· test – Adding or updating tests
+
+· chore – Other changes (CI, build scripts, etc.)
+
+5. Security & Secrets
+
+1. Never commit passwords, API keys, or .env files.
+
+2. Use environment variables instead.
+
+6. Migration Files Check
+
+· Open the shared migration log Excel: docs/migrations_log.xlsx
+
+· Ensure no duplicate migration file name or number exists for your app.
+
+· If you're adding a new migration:
+
+o Run:
+
+python manage.py makemigrations <app_name>
+
+o Then add a new entry to the Excel sheet with:
+
+§ App Name
+
+§ Migration File Name
+
+7. Code Practices
+
+🔹 Clean Code Principles
+
+· Keep functions small and focused.
+
+· Use descriptive variable and function names.
+
+· Avoid deep nesting (use early returns).
+
+· Avoid hard-coded values; use constants/settings.
+
+🔹 Formatting · Use Black formatter link
+
+🔹 Logging
+
+· Use structured logging (e.g., logger.info(), logger.error()).
+
+· Don’t use print statements in production code.
+
+· Avoid logging sensitive data.
