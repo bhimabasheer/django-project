@@ -1,0 +1,51 @@
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
+    def get_expiry_seconds(self, token_payload):
+        now = datetime.now(dt_timezone.utc)
+        exp_dt = datetime.fromtimestamp(token_payload['exp'], tz=dt_timezone.utc)
+        return max(0, int((exp_dt - now).total_seconds()))
+    
+    def post(self, request):
+        token = request.data.get('token')
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                token, requests.Request()
+            )
+            email = idinfo['email']
+            user, created = Users.objects.get_or_create(email=email)
+            if created:
+                user.username = email
+                user.save()
+                print(f"New user created: {user.email}")
+            else:   
+                print(f"Existing user logged in: {user.email}")
+            refresh = RefreshToken.for_user(user)
+            access_payload = jwt.decode(str(refresh.access_token), options={"verify_signature": False})
+            refresh_payload = jwt.decode(str(refresh), options={"verify_signature": False})
+            response_data = {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": Utils.get_user_data(user),
+                "device_id": Utils.get_device_id(request),
+                "access_expires": access_payload['exp'],
+                "refresh_expires": refresh_payload['exp'],
+                "expires_in": {
+                    "access": self.get_expiry_seconds(access_payload),
+                    "refresh": self.get_expiry_seconds(refresh_payload)
+                },
+                **AccountUtils.get_common_login_response(user=user)
+            }
+            return Response(success_(response=response_data, message=const.GOOGLE_LOGIN),
+                            status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response(error_(message=const.INVALID_GOOGLE_TOKEN, response=str(e)),
+                            status=status.HTTP_400_BAD_REQUEST)
+
+
+@staticmethod
+    def get_common_login_response(user):
+        response_data= {
+            "is_premium_member" : user.user_plans.exists(),
+            "is_new_user" : not user.activity_created_user.exists()
+        }
+        return response_data
