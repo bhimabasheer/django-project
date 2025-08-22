@@ -1,0 +1,38 @@
+import uuid
+
+from django.db import models
+from django.utils.translation import gettext_lazy as _
+
+from click_for_marry import settings
+
+
+# Create your models here.
+
+class Transaction(models.Model):
+    class PaymentStatus(models.IntegerChoices):
+        PAYMENT_STATUS_INITIATED = 1, _('Initiated')
+        PAYMENT_STATUS_SUCCESS = 2, _('Success')
+        PAYMENT_STATUS_CANCELLED = 3, _('Cancelled')
+        PAYMENT_STATUS_DECLINED = 4, _('Declined')
+        PAYMENT_STATUS_PENDING = 5, _('Pending')
+        PAYMENT_STATUS_FAILED = 6, _('Failed')
+        PAYMENT_STATUS_EXPIRED = 7, _('Expired')
+
+    ref = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    pg_ref_id = models.CharField(max_length=100, null=True, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='user_transactions')
+    user_plan = models.ForeignKey('subscriptions.UserPlan', on_delete=models.SET_NULL, null=True, blank=True)
+    plan = models.ForeignKey('subscriptions.Plan', on_delete=models.SET_NULL, null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    currency = models.CharField(max_length=5, default="INR")
+    status = models.PositiveSmallIntegerField(
+        choices=PaymentStatus.choices, default=PaymentStatus.PAYMENT_STATUS_INITIATED, db_comment="Status of the payment."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def attributes_to_array(self):
+        attributes = {}
+        for field in self._meta.fields:
+            attributes[field.name] = getattr(self, field.name)
+        return attributes
