@@ -1,0 +1,17 @@
+def profile_share(request, *args, **kwargs):
+    from django.shortcuts import render
+    from click_for_marry import settings
+    aec_id = request.GET.get('aec_id')
+    user = Users.objects.filter(aec_id=aec_id).last()
+    description = f"Profile of {user.first_name} {user.last_name},, Age {user.age}, {user.height},{user.occupation}"
+    domain = f"{settings.FRONT_END_DOMAIN}/api/users/share/?aec_id={aec_id}"
+
+    return render(
+        request,
+        "share_profile.html",
+        context={
+            "user": user,
+            "description": description,
+            "domain": domain,
+        },
+    )
