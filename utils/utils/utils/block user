@@ -1,0 +1,22 @@
+lass BlockUserView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    serializer_class = BlockUserSerializer
+
+    def post(self, request, *args, **kwargs):
+        data = {
+            'from_user' : request.user.id,
+            'to_user' : request.data.get("user_id"),
+            'reason' : request.data.get("reason",None),
+        }
+        serializer = self.serializer_class(data=data, context={'request': request})
+        
+        try:
+            if not serializer.is_valid():
+                errors = json.loads(json.dumps(serializer.errors))
+                errors_data = CommonUtils.extract_validation_error(errors)
+                return Response(error_(message=errors_data,response={},),status=status.HTTP_200_OK)
+            serializer.save()
+            return Response(success_(response={},message="Reported by user successfully"),status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(error_(message=str(e),response={}),status=status.HTTP_200_OK)
